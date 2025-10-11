@@ -1,0 +1,8 @@
+{
+  "projects": {
+    "default": "oab-decision-tool",
+    "prod": "oab-decision-aid"
+  },
+  "targets": {},
+  "etags": {}
+}
