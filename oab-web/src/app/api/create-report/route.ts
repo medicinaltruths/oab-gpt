@@ -2,15 +2,18 @@ import { NextRequest } from "next/server";
 import { generateSummaryPdf } from "@/lib/pdfClient";
 
 /**
- * This endpoint is called by two callers:
- *  1) Your web app (client) — sends { uid, threadId, ... } and optionally an Authorization: Bearer <idToken>.
- *  2) The OpenAI Assistants "tool call" — sends snake_case fields and a thread_id, but no Firebase token.
+ * API route: /api/create-report
+ * Normalizes inputs from either:
+ *  1) Client-side calls (camelCase, optional Firebase id token), or
+ *  2) OpenAI Assistant tool calls (snake_case, no Firebase token),
+ * then invokes the Cloud Function via pdfClient and returns a stable shape.
  *
- * We normalize both shapes, build a payload for the Cloud Function, and return either a signed downloadUrl
- * or a storagePath (depending on how the function is configured to respond).
+ * Goal: zero `any`, ESLint-clean, same runtime behaviour.
  */
 
-// Simple CORS helper (useful for local tests and future cross-origin calls)
+/* ---------------------------------- */
+/* CORS                               */
+/* ---------------------------------- */
 const corsHeaders: HeadersInit = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
@@ -21,32 +24,100 @@ export function OPTIONS() {
   return new Response(null, { status: 204, headers: corsHeaders });
 }
 
-// Map snake_case tool-call fields → camelCase used by our Cloud Function
-function normalizeBody(raw: any) {
-  const b = raw || {};
+/* ---------------------------------- */
+/* Types                              */
+/* ---------------------------------- */
+type PdfLayout = {
+  format: "A4" | "Letter" | string;
+  margin: { top: string; right: string; bottom: string; left: string };
+  css: string;
+};
 
-  // Accept either camelCase or snake_case from the Assistant tool
-  const patientName = b.patientName ?? b.patient_name ?? "";
-  const symptomSummary = b.symptomSummary ?? b.symptom_summary ?? "";
-  const previousTreatments = b.previousTreatments ?? b.previous_treatments ?? "";
-  const socialFactors = b.socialFactors ?? b.social_factors ?? "";
-  const treatmentRecommended = b.treatmentRecommended ?? b.treatment_recommended ?? "";
-  const treatmentExplanation = b.treatmentExplanation ?? b.treatment_explanation ?? "";
-  const questionsForDoctor = b.questionsForDoctor ?? b.questions_for_doctor ?? "";
+interface NormalizedBody {
+  uid?: string;
+  threadId: string;
+  runId?: string;
+  sessionId: string;
 
-  // Build HTML bullet list for questions (so the PDF renders real bullets)
-  function toBulletsHTML(src?: string) {
-    const items = (src ?? "")
-      .split(/\r?\n/)
-      .map((s: string) => s.replace(/^\s*[-•]\s*/, "").trim())
-      .filter(Boolean);
-    if (!items.length) return "<p>No questions provided.</p>";
-    return `<ul class="questions">${items.map((li: string) => `<li>${li.replace(/[&<>"]/g, (m) => ({ "&":"&amp;","<":"&lt;",">":"&gt;", "\"":"&quot;" } as any)[m])}</li>`).join("")}</ul>`;
-  }
-  const questionsHtml = toBulletsHTML(questionsForDoctor);
+  patientName: string;
+  symptomSummary: string;
+  previousTreatments: string;
+  socialFactors: string;
+  treatmentRecommended: string;
+  treatmentExplanation: string;
+  questionsForDoctor: string;
 
-  // Default PDF layout options (A4 + safe margins + right padding to avoid clipping)
-  const pdfLayout = {
+  questionsHtml: string;
+  pdfLayout: PdfLayout;
+  signedUrlTTLms: number;
+}
+
+type PdfClientResult = {
+  downloadUrl?: string;
+  storagePath?: string;
+  error?: unknown;
+  [k: string]: unknown;
+};
+
+/* ---------------------------------- */
+/* Helpers                            */
+/* ---------------------------------- */
+function isRecord(x: unknown): x is Record<string, unknown> {
+  return typeof x === "object" && x !== null;
+}
+
+function htmlEscape(str: string): string {
+  return str.replace(/[&<>"]/g, (m) => {
+    const map: Record<string, string> = {
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+    };
+    return map[m] ?? m;
+  });
+}
+
+function bulletsHtml(src?: string): string {
+  const items = (src ?? "")
+    .split(/\r?\n/)
+    .map((s) => s.replace(/^\s*[-•]\s*/, "").trim())
+    .filter(Boolean);
+  if (!items.length) return "<p>No questions provided.</p>";
+  const lis = items.map((li) => `<li>${htmlEscape(li)}</li>`).join("");
+  return `<ul class="questions">${lis}</ul>`;
+}
+
+/**
+ * Map snake_case and camelCase into a single normalized payload,
+ * and provide reasonable defaults for PDF layout.
+ */
+function normalizeBody(raw: unknown): NormalizedBody {
+  const b = isRecord(raw) ? raw : {};
+
+  // Accept either camelCase or snake_case
+  const patientName = String(b.patientName ?? b.patient_name ?? "");
+  const symptomSummary = String(b.symptomSummary ?? b.symptom_summary ?? "");
+  const previousTreatments = String(b.previousTreatments ?? b.previous_treatments ?? "");
+  const socialFactors = String(b.socialFactors ?? b.social_factors ?? "");
+  const treatmentRecommended = String(b.treatmentRecommended ?? b.treatment_recommended ?? "");
+  const treatmentExplanation = String(b.treatmentExplanation ?? b.treatment_explanation ?? "");
+  const questionsForDoctor = String(b.questionsForDoctor ?? b.questions_for_doctor ?? "");
+
+  const threadId = String(b.threadId ?? b.thread_id ?? "");
+  const runId = b.runId ? String(b.runId) : (b.run_id ? String(b.run_id) : undefined);
+
+  let uid = b.uid ? String(b.uid) : undefined;
+  if (!uid && threadId) uid = `assistant:${threadId}`;
+
+  const sessionId =
+    (b.sessionId ? String(b.sessionId) : undefined) ??
+    (b.session_id ? String(b.session_id) : undefined) ??
+    (uid ? `${uid}-${Date.now()}` : `sess-${Date.now()}`);
+
+  const questionsHtml = bulletsHtml(questionsForDoctor);
+
+  const pdfLayout: PdfLayout = {
     format: "A4",
     margin: { top: "16mm", right: "16mm", bottom: "18mm", left: "16mm" },
     css: `
@@ -58,22 +129,7 @@ function normalizeBody(raw: any) {
     `,
   };
 
-  // Hint for how long the signed URL should live (ms). pdfClient may ignore this if unsupported.
   const signedUrlTTLms = 48 * 60 * 60 * 1000; // 48 hours
-
-  // Thread / run metadata: Assistant provides thread_id; keep run_id if present for diagnostics.
-  const threadId = b.threadId ?? b.thread_id ?? "";
-  const runId = b.runId ?? b.run_id ?? undefined;
-
-  // Caller identity:
-  // - Client will send a real Firebase uid.
-  // - Tool calls won’t have one, so namespace by thread to keep objects isolated.
-  const uid = b.uid || (threadId ? `assistant:${threadId}` : undefined);
-
-  const sessionId =
-    b.sessionId ??
-    b.session_id ??
-    (uid ? `${uid}-${Date.now()}` : `sess-${Date.now()}`);
 
   return {
     uid,
@@ -93,43 +149,34 @@ function normalizeBody(raw: any) {
   };
 }
 
+/* ---------------------------------- */
+/* POST                               */
+/* ---------------------------------- */
 export async function POST(req: NextRequest) {
   try {
-    const raw = await req.json();
-
-    // Pull Firebase ID token from Authorization header if present ("Bearer <token>")
-    const idToken = req.headers.get("authorization")?.replace(/^Bearer\s+/i, "") || undefined;
+    const raw = await req.json().catch(() => ({}));
+    const idToken =
+      req.headers.get("authorization")?.replace(/^Bearer\s+/i, "") || undefined;
 
     const body = normalizeBody(raw);
 
-    // Minimal validation — we must have a threadId; uid will be synthesized if missing.
     if (!body.threadId) {
       return new Response(
         JSON.stringify({ ok: false, error: "Missing threadId" }),
         { status: 400, headers: corsHeaders }
       );
     }
-    if (!body.uid) {
-      // Should only happen on tool calls; synthesize a uid from threadId.
-      body.uid = `assistant:${body.threadId}`;
-    }
+    // `uid` is synthesized in normalizeBody if missing
 
-    // Call Cloud Function. Pass idToken if available (enables per-user ACL if you turn it on).
-    // Prefer enhanced fields if pdfClient supports them; fall back gracefully otherwise
-    const data = await generateSummaryPdf(
+    // Call Cloud Function through pdfClient with enhanced fields present.
+    // generateSummaryPdf should forward what it understands and ignore extras.
+    const data = (await generateSummaryPdf(
       {
         ...body,
-        // Provide both raw and HTML forms of questions so the renderer can choose
-        questionsHtml: (body as any).questionsHtml,
-        pdfLayout: (body as any).pdfLayout,
-        signedUrlTTLms: (body as any).signedUrlTTLms,
       },
       idToken
-    );
+    )) as PdfClientResult;
 
-    // Normalize a successful shape for the frontend
-    // The cloud function may return {downloadUrl} (signed) or {storagePath}.
-    // The questionsHtml, pdfLayout, and signedUrlTTLms fields are pass-throughs for the PDF client and safe to ignore.
     if (data?.downloadUrl || data?.storagePath) {
       return new Response(JSON.stringify({ ok: true, ...data }), {
         status: 200,
@@ -137,7 +184,6 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // If we got here, the function didn't return what we expected
     return new Response(
       JSON.stringify({
         ok: false,
@@ -146,12 +192,13 @@ export async function POST(req: NextRequest) {
       }),
       { status: 502, headers: corsHeaders }
     );
-  } catch (e: any) {
-    // Surface a concise, serializable error
+  } catch (e: unknown) {
     const message =
-      e?.response?.data?.error ||
-      e?.message ||
-      "Unknown error";
+      e instanceof Error
+        ? e.message
+        : typeof e === "string"
+        ? e
+        : "Unknown error";
     console.error("create-report error:", message);
     return new Response(JSON.stringify({ ok: false, error: message }), {
       status: 500,
