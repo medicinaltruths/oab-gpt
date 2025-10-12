@@ -95,7 +95,6 @@ function extractUrls(text: string): string[] {
   const urls: string[] = [];
   const re = /\bhttps?:\/\/[^\s)]+/gi;
   let m: RegExpExecArray | null;
-  // eslint-disable-next-line no-cond-assign
   while ((m = re.exec(text)) !== null) {
     urls.push(m[0]);
   }
@@ -325,17 +324,25 @@ async function handleRequiredActionNow(
       console.log("[chat] CF create-report status:", resp.status);
       console.log("[chat] CF create-report body:", raw);
 
-      let data: { ok?: boolean; downloadUrl?: string; error?: unknown } | null =
-        null;
+      interface PdfResp { ok?: boolean; downloadUrl?: string; error?: unknown }
+      let data: PdfResp | null = null;
       try {
-        data = raw ? (JSON.parse(raw) as typeof data) : null;
+        const tmp = raw ? (JSON.parse(raw) as unknown) : null;
+        if (tmp && typeof tmp === "object") {
+          const d = tmp as Partial<PdfResp>;
+          data = {
+            ok: typeof d.ok === "boolean" ? d.ok : undefined,
+            downloadUrl: typeof d.downloadUrl === "string" ? d.downloadUrl : undefined,
+            error: d.error,
+          };
+        }
       } catch {
         /* ignore non-JSON error bodies */
       }
 
-      if (resp.ok && data?.ok && typeof data.downloadUrl === "string" && data.downloadUrl) {
+      if (resp.ok && data?.ok && typeof data.downloadUrl === "string" && data.downloadUrl.length > 0) {
         outputText = data.downloadUrl; // send the actual signed URL back to the Assistant
-      } else if (data?.error) {
+      } else if (data && "error" in data && typeof data.error !== "undefined") {
         outputText = `ERROR: ${String(data.error)}`;
       } else {
         outputText = `ERROR: PDF function responded without a URL (status ${resp.status}).`;
@@ -640,17 +647,26 @@ export async function POST(req: Request) {
               console.log("[chat] CF create-report status:", resp.status);
               console.log("[chat] CF create-report body:", raw);
 
-              let data: { ok?: boolean; downloadUrl?: string; error?: unknown } | null = null;
+              interface PdfResp { ok?: boolean; downloadUrl?: string; error?: unknown }
+              let data: PdfResp | null = null;
               try {
-                data = raw ? (JSON.parse(raw) as typeof data) : null;
+                const tmp = raw ? (JSON.parse(raw) as unknown) : null;
+                if (tmp && typeof tmp === "object") {
+                  const d = tmp as Partial<PdfResp>;
+                  data = {
+                    ok: typeof d.ok === "boolean" ? d.ok : undefined,
+                    downloadUrl: typeof d.downloadUrl === "string" ? d.downloadUrl : undefined,
+                    error: d.error,
+                  };
+                }
               } catch {
                 /* ignore */
               }
               lastToolResult = data || lastToolResult;
 
-              if (resp.ok && data?.ok && typeof data.downloadUrl === "string" && data.downloadUrl) {
+              if (resp.ok && data?.ok && typeof data.downloadUrl === "string" && data.downloadUrl.length > 0) {
                 outputText = data.downloadUrl;
-              } else if (data?.error) {
+              } else if (data && "error" in data && typeof data.error !== "undefined") {
                 outputText = `ERROR: ${String(data.error)}`;
               } else {
                 outputText = `ERROR: PDF function responded without a URL (status ${resp.status}).`;
