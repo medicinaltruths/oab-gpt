@@ -1,19 +1,87 @@
-export async function generateSummaryPdf(payload: any, idToken?: string) {
-  // --- Helpers (kept local to this module) ---
-  const mm = (n: number) => `${n}mm`;
+/**
+ * Client helper to call the PDF Cloud Function.
+ * Behaviour preserved from the original version; only types/guards were added.
+ */
 
-  function toBulletsHTML(src?: string) {
+type Millimetres = string;
+
+export type PdfMargin = {
+  top: Millimetres;
+  right: Millimetres;
+  bottom: Millimetres;
+  left: Millimetres;
+};
+
+export type PdfLayout = {
+  format: string; // e.g. "A4"
+  margin: PdfMargin;
+  css: string;
+};
+
+/**
+ * Payload accepted by the service. We keep this permissive
+ * because the original code spreads all caller-provided fields.
+ */
+export type GeneratePdfPayload = {
+  // Known fields used in this helper (others are passed through untouched)
+  signedUrlTTLms?: number;
+  questionsHtml?: string;
+  questions_for_doctor?: string;
+  pdfLayout?: Partial<PdfLayout> & {
+    margin?: Partial<PdfMargin>;
+    css?: string;
+  };
+
+  // Threading/session hints commonly included by callers
+  uid?: string;
+  threadId?: string;
+  runId?: string;
+  sessionId?: string;
+
+  // Clinical fields (free text)
+  patientName?: string;
+  symptomSummary?: string;
+  previousTreatments?: string;
+  socialFactors?: string;
+  treatmentRecommended?: string;
+  treatmentExplanation?: string;
+  questionsForDoctor?: string;
+
+  // Allow arbitrary extra data (preserved in the spread)
+  [k: string]: unknown;
+};
+
+/**
+ * Return type is intentionally `unknown` because the CF may evolve.
+ * Callers can narrow/validate as needed. This avoids `any`.
+ */
+export async function generateSummaryPdf(
+  payload: GeneratePdfPayload,
+  idToken?: string
+): Promise<unknown> {
+  // --- Helpers (kept local to this module) ---
+  const mm = (n: number): Millimetres => `${n}mm`;
+
+  function toBulletsHTML(src?: string): string {
     const items = (src ?? "")
       .split(/\r?\n/)
-      .map((s: string) => s.replace(/^\s*[-•]\s*/, "").trim())
+      .map((s) => s.replace(/^\s*[-•]\s*/, "").trim())
       .filter(Boolean);
     if (!items.length) return "<p>No questions provided.</p>";
     // Minimal escaping
-    const esc = (t: string) => t.replace(/[&<>"]/g, (m) => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;" } as any)[m]);
-    return `<ul class="questions">${items.map(li => `<li>${esc(li)}</li>`).join("")}</ul>`;
+    const escMap: Record<string, string> = {
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+    };
+    const esc = (t: string) => t.replace(/[&<>"]/g, (m) => escMap[m] ?? m);
+    return `<ul class="questions">${items
+      .map((li) => `<li>${esc(li)}</li>`)
+      .join("")}</ul>`;
   }
 
-  function mergePdfLayout(userLayout?: any) {
+  function mergePdfLayout(userLayout?: GeneratePdfPayload["pdfLayout"]): PdfLayout {
     const baseCss = `
       @page { size: A4; margin: 16mm 16mm 18mm 16mm; }
       html, body { margin: 0; padding: 0; }
@@ -23,7 +91,12 @@ export async function generateSummaryPdf(payload: any, idToken?: string) {
     `.trim();
 
     const layout = userLayout ?? {};
-    const margin = layout.margin ?? { top: mm(16), right: mm(16), bottom: mm(18), left: mm(16) };
+    const margin: PdfMargin = {
+      top: (layout.margin?.top as Millimetres) ?? mm(16),
+      right: (layout.margin?.right as Millimetres) ?? mm(16),
+      bottom: (layout.margin?.bottom as Millimetres) ?? mm(18),
+      left: (layout.margin?.left as Millimetres) ?? mm(16),
+    };
     const css = [baseCss, layout.css].filter(Boolean).join("\n");
 
     return {
@@ -45,7 +118,11 @@ export async function generateSummaryPdf(payload: any, idToken?: string) {
   const questionsHtml =
     typeof payload?.questionsHtml === "string" && payload.questionsHtml.trim()
       ? payload.questionsHtml
-      : toBulletsHTML(payload?.questions_for_doctor ?? payload?.questionsForDoctor);
+      : toBulletsHTML(
+          (typeof payload?.questions_for_doctor === "string" && payload.questions_for_doctor) ||
+            (typeof payload?.questionsForDoctor === "string" && payload.questionsForDoctor) ||
+            ""
+        );
 
   const pdfLayout = mergePdfLayout(payload?.pdfLayout);
 
@@ -57,24 +134,27 @@ export async function generateSummaryPdf(payload: any, idToken?: string) {
     margin: pdfLayout.margin,
   };
 
-  const finalPayload = {
-    ...payload,
-    questionsHtml,
-    pdfLayout,
-    pdfOptions,
-    signedUrlTTLms,
-    // A tiny hint block some backends like to read
-    renderHints: {
-      engine: "html-to-pdf",     // hint; backend can ignore
-      enforceA4: true,
-      safeRightPaddingMm: 2,
-    },
-  };
+  const endpoint = process.env.PDF_FUNCTION_URL;
+  if (!endpoint) {
+    throw new Error("PDF function endpoint missing: set PDF_FUNCTION_URL");
+  }
 
-  const r = await fetch(process.env.PDF_FUNCTION_URL!, {
+  const r = await fetch(endpoint, {
     method: "POST",
     headers,
-    body: JSON.stringify(finalPayload),
+    body: JSON.stringify({
+      ...payload,
+      questionsHtml,
+      pdfLayout,
+      pdfOptions,
+      signedUrlTTLms,
+      // A tiny hint block some backends like to read
+      renderHints: {
+        engine: "html-to-pdf", // hint; backend can ignore
+        enforceA4: true,
+        safeRightPaddingMm: 2,
+      },
+    }),
     // cache: "no-store" is default for POST in Next.js route handlers
   });
 
@@ -82,5 +162,8 @@ export async function generateSummaryPdf(payload: any, idToken?: string) {
     const err = await r.text().catch(() => "");
     throw new Error(`PDF function error: ${r.status} ${err}`);
   }
-  return r.json();
+  // Preserve original behaviour: return the raw JSON from the function.
+  // Use `unknown` instead of `any` to satisfy ESLint (@typescript-eslint/no-explicit-any).
+  const data: unknown = await r.json().catch(() => ({}));
+  return data;
 }

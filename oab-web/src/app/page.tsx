@@ -433,47 +433,6 @@ function ChatPane() {
   }
 }
 
-  // Keeping for future manual testing. Not used in UI right now.
-  async function _generatePdf() {
-    setBusy(true);
-    try {
-      const payload = {
-        uid,
-        threadId,
-        patientName: "Anonymous",
-        symptomSummary: "Collected from the chat (demo).",
-        previousTreatments: "PFMT, meds (demo)",
-        socialFactors: "Work, travel constraints (demo)",
-        treatmentRecommended: "Will be determined (demo)",
-        treatmentExplanation: "Personalized explanation (demo)",
-        questionsForDoctor:
-          "What is the expected improvement and timeline? (demo)",
-        sessionId: `sess-${Date.now()}`,
-      };
-
-      const res = await fetch("/api/create-report", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      const data: { downloadUrl?: string; storagePath?: string } =
-        await res.json();
-      if (data.downloadUrl) {
-        window.open(data.downloadUrl, "_blank");
-      } else if (data.storagePath) {
-        alert(`Report saved to: ${data.storagePath}`);
-      } else {
-        alert("Report created, but no link returned.");
-      }
-    } catch (e) {
-      console.error(e);
-      alert("Could not generate PDF.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
   function resetConversation() {
     setThreadId(null);
     if (typeof window !== "undefined") {
