@@ -74,6 +74,43 @@ export const maxDuration = 60; // seconds (adjust to your Vercel plan)
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/* ------------------------------------ */
+/* Per-request timeout + lightweight retry */
+/* ------------------------------------ */
+function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init: RequestInit & { timeoutMs?: number } = {}
+) {
+  const { timeoutMs = 20_000, ...rest } = init;
+  const ctrl = new AbortController();
+  const tid = setTimeout(() => ctrl.abort(), timeoutMs);
+  return fetch(input, { ...rest, signal: ctrl.signal }).finally(() =>
+    clearTimeout(tid)
+  );
+}
+
+async function fetchRetry(
+  input: RequestInfo | URL,
+  init: RequestInit & { timeoutMs?: number } = {},
+  tries = 3
+): Promise<Response> {
+  let lastErr: unknown = null;
+  for (let i = 0; i < tries; i++) {
+    try {
+      const res = await fetchWithTimeout(input, init);
+      if (res.status >= 500 || res.status === 429) {
+        lastErr = new Error(`HTTP ${res.status}`);
+      } else {
+        return res;
+      }
+    } catch (e) {
+    lastErr = e;
+    }
+    await wait(400 * Math.pow(2, i));
+  }
+  throw lastErr ?? new Error("fetchRetry failed");
+}
+
 /* -------------------------- */
 /* Message/text helper guards */
 /* -------------------------- */
@@ -141,7 +178,7 @@ async function retrieveRunHTTP(
   threadId: string,
   runId: string
 ): Promise<RunShape> {
-  const res = await fetch(
+  const res = await fetchRetry(
     `https://api.openai.com/v1/threads/${threadId}/runs/${runId}`,
     {
       method: "GET",
@@ -151,6 +188,7 @@ async function retrieveRunHTTP(
         "OpenAI-Beta": "assistants=v2",
       },
       cache: "no-store",
+      timeoutMs: 20_000,
     }
   );
   if (!res.ok) {
@@ -164,7 +202,7 @@ async function listRunsLatestHTTP(threadId: string): Promise<string> {
   const url = new URL(`https://api.openai.com/v1/threads/${threadId}/runs`);
   url.searchParams.set("limit", "1");
   url.searchParams.set("order", "desc");
-  const res = await fetch(url.toString(), {
+  const res = await fetchRetry(url.toString(), {
     method: "GET",
     headers: {
       Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
@@ -172,6 +210,7 @@ async function listRunsLatestHTTP(threadId: string): Promise<string> {
       "OpenAI-Beta": "assistants=v2",
     },
     cache: "no-store",
+    timeoutMs: 20_000,
   });
   if (!res.ok) {
     const err = await res.text().catch(() => "");
@@ -187,7 +226,7 @@ async function listRunsLatestHTTPWithStatus(
   const url = new URL(`https://api.openai.com/v1/threads/${threadId}/runs`);
   url.searchParams.set("limit", "1");
   url.searchParams.set("order", "desc");
-  const res = await fetch(url.toString(), {
+  const res = await fetchRetry(url.toString(), {
     method: "GET",
     headers: {
       Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
@@ -195,6 +234,7 @@ async function listRunsLatestHTTPWithStatus(
       "OpenAI-Beta": "assistants=v2",
     },
     cache: "no-store",
+    timeoutMs: 20_000,
   });
   if (!res.ok) return null;
   const data = (await res.json()) as {
@@ -205,7 +245,7 @@ async function listRunsLatestHTTPWithStatus(
 }
 
 async function cancelRunHTTP(threadId: string, runId: string) {
-  const res = await fetch(
+  const res = await fetchRetry(
     `https://api.openai.com/v1/threads/${threadId}/runs/${runId}/cancel`,
     {
       method: "POST",
@@ -214,6 +254,7 @@ async function cancelRunHTTP(threadId: string, runId: string) {
         "Content-Type": "application/json",
         "OpenAI-Beta": "assistants=v2",
       },
+      timeoutMs: 20_000,
     }
   );
   return res.ok;
@@ -229,7 +270,7 @@ async function submitToolOutputsCompat(
   tool_outputs: Array<{ tool_call_id: string; output: string }>
 ): Promise<unknown> {
   try {
-    const res = await fetch(
+    const res = await fetchRetry(
       `https://api.openai.com/v1/threads/${threadId}/runs/${runId}/submit_tool_outputs`,
       {
         method: "POST",
@@ -240,6 +281,7 @@ async function submitToolOutputsCompat(
         },
         cache: "no-store",
         body: JSON.stringify({ tool_outputs }),
+        timeoutMs: 20_000,
       }
     );
     if (!res.ok) {
@@ -314,11 +356,12 @@ async function handleRequiredActionNow(
     const url = PDF_FUNCTION_URL;
     let outputText = "";
     try {
-      const resp = await fetch(url, {
+      const resp = await fetchRetry(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         cache: "no-store",
         body: JSON.stringify(payload),
+        timeoutMs: 20_000,
       });
       const raw = await resp.text();
       console.log("[chat] CF create-report status:", resp.status);
@@ -569,14 +612,10 @@ export async function POST(req: Request) {
             { status: 200 }
           );
         }
+        // Tell the client to retry; avoid 60s platform timeout
         return new Response(
-          JSON.stringify({
-            error: "Run polling timed out",
-            threadId,
-            runId,
-            lastKnownStatus: status,
-          }),
-          { status: 504 }
+          JSON.stringify({ reason: "run_active", threadId, runId }),
+          { status: 202 }
         );
       }
 
@@ -637,11 +676,12 @@ export async function POST(req: Request) {
 
             let outputText = "";
             try {
-              const resp = await fetch(PDF_FUNCTION_URL, {
+              const resp = await fetchRetry(PDF_FUNCTION_URL, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 cache: "no-store",
                 body: JSON.stringify(payload),
+                timeoutMs: 20_000,
               });
               const raw = await resp.text();
               console.log("[chat] CF create-report status:", resp.status);
