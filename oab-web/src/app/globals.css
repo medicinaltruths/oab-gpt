@@ -12,15 +12,252 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #02052e;
-    --foreground: #ededed;
-  }
-}
-
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+@layer base {
+  @property --hero-pos-x {
+    syntax: "<percentage>";
+    initial-value: 11.14%;
+    inherits: false;
+  }
+
+  @property --hero-pos-y {
+    syntax: "<percentage>";
+    initial-value: 140%;
+    inherits: false;
+  }
+
+  @property --hero-spread-x {
+    syntax: "<percentage>";
+    initial-value: 150%;
+    inherits: false;
+  }
+
+  @property --hero-spread-y {
+    syntax: "<percentage>";
+    initial-value: 180.06%;
+    inherits: false;
+  }
+
+  @property --hero-color-1 {
+    syntax: "<color>";
+    initial-value: #000;
+    inherits: false;
+  }
+
+  @property --hero-color-2 {
+    syntax: "<color>";
+    initial-value: #000;
+    inherits: false;
+  }
+
+  @property --hero-color-3 {
+    syntax: "<color>";
+    initial-value: #000;
+    inherits: false;
+  }
+
+  @property --hero-color-4 {
+    syntax: "<color>";
+    initial-value: #000;
+    inherits: false;
+  }
+
+  @property --hero-color-5 {
+    syntax: "<color>";
+    initial-value: #000;
+    inherits: false;
+  }
+
+  @property --hero-border-angle {
+    syntax: "<angle>";
+    initial-value: 20deg;
+    inherits: false;
+  }
+
+  @property --hero-border-color-1 {
+    syntax: "<color>";
+    initial-value: hsla(0, 0%, 100%, 0.2);
+    inherits: false;
+  }
+
+  @property --hero-border-color-2 {
+    syntax: "<color>";
+    initial-value: hsla(0, 0%, 100%, 0.6);
+    inherits: false;
+  }
+
+  @property --hero-stop-1 {
+    syntax: "<percentage>";
+    initial-value: 32%;
+    inherits: false;
+  }
+
+  @property --hero-stop-2 {
+    syntax: "<percentage>";
+    initial-value: 58%;
+    inherits: false;
+  }
+
+  @property --hero-stop-3 {
+    syntax: "<percentage>";
+    initial-value: 79%;
+    inherits: false;
+  }
+
+  @property --hero-stop-4 {
+    syntax: "<percentage>";
+    initial-value: 100%;
+    inherits: false;
+  }
+
+  @property --hero-stop-5 {
+    syntax: "<percentage>";
+    initial-value: 100%;
+    inherits: false;
+  }
+}
+
+@layer components {
+  .hero-cta-gradient {
+    position: relative;
+    display: inline-flex;
+    min-width: 210px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 0.75rem;
+    padding: 0.75rem 1.5rem;
+    font-weight: 700;
+    color: #fffbe8;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+    background: radial-gradient(
+      var(--hero-spread-x) var(--hero-spread-y) at var(--hero-pos-x) var(--hero-pos-y),
+      var(--hero-color-1) var(--hero-stop-1),
+      var(--hero-color-2) var(--hero-stop-2),
+      var(--hero-color-3) var(--hero-stop-3),
+      var(--hero-color-4) var(--hero-stop-4),
+      var(--hero-color-5) var(--hero-stop-5)
+    );
+    box-shadow: 0 10px 20px rgba(2, 5, 46, 0.35);
+    transition:
+      transform 0.35s ease,
+      box-shadow 0.35s ease,
+      --hero-pos-x 0.5s,
+      --hero-pos-y 0.5s,
+      --hero-spread-x 0.5s,
+      --hero-spread-y 0.5s,
+      --hero-color-1 0.5s,
+      --hero-color-2 0.5s,
+      --hero-color-3 0.5s,
+      --hero-color-4 0.5s,
+      --hero-color-5 0.5s,
+      --hero-border-angle 0.5s,
+      --hero-border-color-1 0.5s,
+      --hero-border-color-2 0.5s,
+      --hero-stop-1 0.5s,
+      --hero-stop-2 0.5s,
+      --hero-stop-3 0.5s,
+      --hero-stop-4 0.5s,
+      --hero-stop-5 0.5s;
+  }
+
+  .hero-cta-gradient::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(
+      var(--hero-border-angle),
+      var(--hero-border-color-1),
+      var(--hero-border-color-2)
+    );
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    mask-composite: exclude;
+    pointer-events: none;
+  }
+
+  .hero-cta-gradient:hover,
+  .hero-cta-gradient:focus-visible {
+    --hero-pos-x: 0%;
+    --hero-pos-y: 95.51%;
+    --hero-spread-x: 110.24%;
+    --hero-spread-y: 110.2%;
+    --hero-stop-1: 0%;
+    --hero-stop-2: 8.8%;
+    --hero-stop-3: 21.44%;
+    --hero-stop-4: 71.34%;
+    --hero-stop-5: 90.76%;
+    --hero-border-angle: 190deg;
+    transform: translateY(-4px);
+    box-shadow: 0 16px 28px rgba(2, 5, 46, 0.5);
+    outline: none;
+  }
+
+  .hero-cta-gradient:focus-visible {
+    box-shadow:
+      0 16px 28px rgba(2, 5, 46, 0.5),
+      0 0 0 2px rgba(250, 245, 217, 0.9);
+  }
+
+  .hero-cta-warm {
+    color: #02052e;
+    text-shadow: none;
+    --hero-color-1: #fef3d0;
+    --hero-color-2: #efd4a4;
+    --hero-color-3: #d6b078;
+    --hero-color-4: #b68b58;
+    --hero-color-5: #b68b58;
+    --hero-border-color-1: hsla(226, 68%, 20%, 0.45);
+    --hero-border-color-2: hsla(226, 78%, 14%, 0.85);
+  }
+
+  .hero-cta-warm:hover,
+  .hero-cta-warm:focus-visible {
+    --hero-color-1: #fff7de;
+    --hero-color-2: #f4dfb0;
+    --hero-color-3: #debf85;
+    --hero-color-4: #c6995f;
+    --hero-color-5: #9f7544;
+    --hero-border-color-1: hsla(224, 78%, 24%, 0.35);
+    --hero-border-color-2: hsla(224, 86%, 16%, 0.88);
+  }
+
+  .hero-cta-cool {
+    --hero-color-1: #03102f;
+    --hero-color-2: #17407f;
+    --hero-color-3: #1f6bb8;
+    --hero-color-4: #128b8f;
+    --hero-color-5: #128b8f;
+    --hero-border-color-1: hsla(201, 85%, 82%, 0.42);
+    --hero-border-color-2: hsla(188, 66%, 53%, 0.72);
+  }
+
+  .hero-cta-cool:hover,
+  .hero-cta-cool:focus-visible {
+    --hero-color-1: #020d28;
+    --hero-color-2: #2054a5;
+    --hero-color-3: #2f86d0;
+    --hero-color-4: #11a9a6;
+    --hero-color-5: #67d2c6;
+    --hero-border-color-1: hsla(195, 88%, 88%, 0.26);
+    --hero-border-color-2: hsla(184, 74%, 60%, 0.78);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-cta-gradient {
+    transition: none;
+  }
+
+  .hero-cta-gradient:hover,
+  .hero-cta-gradient:focus-visible {
+    transform: none;
+  }
 }
