@@ -29,15 +29,54 @@ const THREAD_IDLE_MS = 45 * 60 * 1000; // 45 minutes: start a fresh thread after
 type Message = { role: "user" | "assistant"; content: string };
 
 function HeroTop() {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    video.muted = true;
+    video.defaultMuted = true;
+
+    const tryPlay = () => {
+      const playPromise = video.play();
+      if (playPromise) {
+        playPromise.catch(() => {
+          // Autoplay can still be blocked by browser/device settings.
+        });
+      }
+    };
+
+    if (video.readyState >= 2) {
+      tryPlay();
+    } else {
+      video.addEventListener("canplay", tryPlay, { once: true });
+    }
+
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible" && video.paused) {
+        tryPlay();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibility);
+
+    return () => {
+      video.removeEventListener("canplay", tryPlay);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, []);
+
   return (
     <header className="relative isolate w-full min-h-screen md:min-h-[100svh] border-b border-white/15 overflow-hidden">
       <video
+        ref={videoRef}
         className="absolute inset-0 h-full w-full object-cover scale-[1.02]"
         autoPlay
         loop
         muted
         playsInline
-        preload="metadata"
+        preload="auto"
         aria-hidden="true"
       >
         <source
@@ -48,26 +87,28 @@ function HeroTop() {
 
       <div className="relative z-10 max-w-7xl mx-auto px-8 md:px-16 min-h-screen md:min-h-[100svh] py-20 md:py-24 lg:py-28 flex items-center">
         <div className="w-full max-w-5xl mx-auto text-center px-6 md:px-10 lg:px-14">
-          <div
-            className="text-xs md:text-sm tracking-[0.2em] uppercase text-[#faf5d9]/85"
-            style={{ fontFamily: "var(--font-display)" }}
-          >
-            Patient‑centred&nbsp;|&nbsp;Evidence‑based
+          <div className="hero-fade-seq hero-fade-1">
+            <div
+              className="text-xs md:text-sm tracking-[0.2em] uppercase text-[#faf5d9]/85"
+              style={{ fontFamily: "var(--font-display)" }}
+            >
+              Patient‑centred&nbsp;|&nbsp;Evidence‑based
+            </div>
+            <h1
+              className="mt-6 text-5xl sm:text-6xl md:text-7xl lg:text-[5.6rem] leading-[1.06] text-[#faf5d9] drop-shadow-[0_4px_22px_rgba(0,0,0,0.45)]"
+              style={{ fontFamily: "var(--font-display)" }}
+            >
+              Empowering Bladder Health
+            </h1>
           </div>
-          <h1
-            className="mt-6 text-5xl sm:text-6xl md:text-7xl lg:text-[5.6rem] leading-[1.06] text-[#faf5d9] drop-shadow-[0_4px_22px_rgba(0,0,0,0.45)]"
-            style={{ fontFamily: "var(--font-display)" }}
-          >
-            Empowering Bladder Health
-          </h1>
           <p
-            className="mt-6 mx-auto text-sm sm:text-base md:text-lg lg:text-xl md:whitespace-nowrap text-[#faf5d9]/78 drop-shadow-[0_2px_8px_rgba(0,0,0,0.3)]"
+            className="hero-fade-seq hero-fade-2 mt-6 mx-auto text-sm sm:text-base md:text-lg lg:text-xl md:whitespace-nowrap text-[#faf5d9]/78 drop-shadow-[0_2px_8px_rgba(0,0,0,0.3)]"
             style={{ fontFamily: "var(--font-display)" }}
           >
             Helping you make decisions about treatment for overactive bladder.
           </p>
 
-          <div className="mt-10 flex flex-wrap items-center justify-center gap-4 md:gap-5">
+          <div className="hero-fade-seq hero-fade-3 mt-10 flex flex-wrap items-center justify-center gap-4 md:gap-5">
             <button
               onClick={() => {
                 document
@@ -1045,3 +1086,4 @@ export default function Page() {
     </>
   );
 }
+
