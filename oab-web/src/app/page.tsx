@@ -1,6 +1,5 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import Image from "next/image";
 import { ensureAnonUser } from "@/lib/firebase";
 import ReactMarkdown from "react-markdown";
 
@@ -31,69 +30,66 @@ type Message = { role: "user" | "assistant"; content: string };
 
 function HeroTop() {
   return (
-    <header className="w-full border-b border-white/10">
-      <div className="max-w-7xl mx-auto px-8 md:px-16 py-28 md:py-40">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-center">
-          {/* Left: Title block */}
-          <div className="lg:col-span-2 max-w-none">
-            <div
-              className="text-xs tracking-[0.2em] uppercase text-[#faf5d9]/80"
-              style={{ fontFamily: "var(--font-display)" }}
-            >
-              Patient‑centred&nbsp;|&nbsp;Evidence‑based
-            </div>
-            <h1
-              className="mt-6 text-7xl md:text-8xl leading-[1.1] text-[#faf5d9]"
-              style={{ fontFamily: "var(--font-display)" }}
-            >
-              Empowering Bladder Health
-            </h1>
-            <p
-              className="mt-8 text-2xl md:text-3xl text-[#faf5d9]/85"
-              style={{ fontFamily: "var(--font-display)" }}
-            >
-              Helping you make decisions about treatment for overactive bladder.
-            </p>
+    <header className="relative isolate w-full min-h-screen md:min-h-[100svh] border-b border-white/15 overflow-hidden">
+      <video
+        className="absolute inset-0 h-full w-full object-cover scale-[1.02]"
+        autoPlay
+        loop
+        muted
+        playsInline
+        preload="metadata"
+        aria-hidden="true"
+      >
+        <source
+          src="https://d8j0ntlcm91z4.cloudfront.net/user_39w19TCI1XWyxZ4H2GlXo141kWt/hf_20260221_180907_303b6b72-0efa-479c-932d-6406d0e56a51.mp4"
+          type="video/mp4"
+        />
+      </video>
 
-            <div className="mt-8 flex flex-wrap gap-4">
-              <button
-                onClick={() => {
-                  document
-                    .getElementById("chat-section")
-                    ?.scrollIntoView({ behavior: "smooth" });
-                }}
-                className="inline-flex items-center justify-center rounded-xl px-5 py-3 bg-[#faf5d9] text-[#02052e] font-bold hover:opacity-90 transition"
-                style={{ fontFamily: "var(--font-display)" }}
-              >
-                Start your assessment
-              </button>
-              <button
-                onClick={() => {
-                  document
-                    .getElementById("info-section")
-                    ?.scrollIntoView({ behavior: "smooth" });
-                }}
-                className="inline-flex items-center justify-center rounded-xl px-5 py-3 border border-[#faf5d9]/70 text-[#faf5d9] font-bold hover:bg-white/10 transition"
-                style={{ fontFamily: "var(--font-display)" }}
-              >
-                Learn more
-              </button>
-            </div>
+      <div className="relative z-10 max-w-7xl mx-auto px-8 md:px-16 min-h-screen md:min-h-[100svh] py-20 md:py-24 lg:py-28 flex items-center">
+        <div className="w-full max-w-5xl mx-auto text-center px-6 md:px-10 lg:px-14">
+          <div
+            className="text-xs md:text-sm tracking-[0.2em] uppercase text-[#faf5d9]/85"
+            style={{ fontFamily: "var(--font-display)" }}
+          >
+            Patient‑centred&nbsp;|&nbsp;Evidence‑based
           </div>
+          <h1
+            className="mt-6 text-5xl sm:text-6xl md:text-7xl lg:text-[5.6rem] leading-[1.06] text-[#faf5d9] drop-shadow-[0_4px_22px_rgba(0,0,0,0.45)]"
+            style={{ fontFamily: "var(--font-display)" }}
+          >
+            Empowering Bladder Health
+          </h1>
+          <p
+            className="mt-6 mx-auto text-sm sm:text-base md:text-lg lg:text-xl md:whitespace-nowrap text-[#faf5d9]/78 drop-shadow-[0_2px_8px_rgba(0,0,0,0.3)]"
+            style={{ fontFamily: "var(--font-display)" }}
+          >
+            Helping you make decisions about treatment for overactive bladder.
+          </p>
 
-          {/* Right: image placeholder */}
-          <div className="w-full lg:col-span-1">
-            <div className="relative aspect-[9/14] rounded-2xl overflow-hidden border border-white/10">
-              {/* Replace /hero.jpg with your actual filename placed in /public */}
-              <Image
-                src="/hero.jpg"
-                alt="Enjoying life"
-                fill
-                sizes="(min-width: 1024px) 60vw, 120vw"
-                className="object-cover"
-                priority
-              />
-            </div>
+          <div className="mt-10 flex flex-wrap items-center justify-center gap-4 md:gap-5">
+            <button
+              onClick={() => {
+                document
+                  .getElementById("chat-section")
+                  ?.scrollIntoView({ behavior: "smooth" });
+              }}
+              className="hero-cta-gradient hero-cta-warm"
+              style={{ fontFamily: "var(--font-display)" }}
+            >
+              Start your assessment
+            </button>
+            <button
+              onClick={() => {
+                document
+                  .getElementById("info-section")
+                  ?.scrollIntoView({ behavior: "smooth" });
+              }}
+              className="hero-cta-gradient hero-cta-cool"
+              style={{ fontFamily: "var(--font-display)" }}
+            >
+              Learn more
+            </button>
           </div>
         </div>
       </div>
