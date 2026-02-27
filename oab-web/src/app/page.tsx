@@ -54,13 +54,7 @@ const HOW_FELICITY_ACCORDION_ITEMS: Array<{ title: string; points: string[] }> =
 ];
 
 function HeroTop() {
-  const sectionRef = useRef<HTMLElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const [videoOpacity, setVideoOpacity] = useState(1);
-  const [heroOpacity, setHeroOpacity] = useState(1);
-  const [midTranslateY, setMidTranslateY] = useState(120);
-  const [midOpacity, setMidOpacity] = useState(0);
-  const [tealOpacity, setTealOpacity] = useState(0);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -68,8 +62,15 @@ function HeroTop() {
 
     video.muted = true;
     video.defaultMuted = true;
+    video.autoplay = true;
+    video.playsInline = true;
+    video.setAttribute("muted", "");
+    video.setAttribute("autoplay", "");
+    video.setAttribute("playsinline", "true");
+    video.setAttribute("webkit-playsinline", "true");
 
     const tryPlay = () => {
+      if (!video.paused) return;
       const playPromise = video.play();
       if (playPromise) {
         playPromise.catch(() => {
@@ -78,78 +79,60 @@ function HeroTop() {
       }
     };
 
-    if (video.readyState >= 2) {
+    const retryUntilPlaying = () => {
+      let retries = 0;
+      const maxRetries = 8;
+
+      const retry = () => {
+        if (!video.paused || retries >= maxRetries) return;
+        retries += 1;
+        tryPlay();
+        window.setTimeout(retry, 250);
+      };
+
+      retry();
+    };
+
+    const onVideoReady = () => {
       tryPlay();
-    } else {
-      video.addEventListener("canplay", tryPlay, { once: true });
+      retryUntilPlaying();
+    };
+
+    if (video.readyState >= 1) {
+      onVideoReady();
     }
+
+    video.addEventListener("loadedmetadata", onVideoReady);
+    video.addEventListener("loadeddata", onVideoReady);
+    video.addEventListener("canplay", onVideoReady);
+    video.addEventListener("canplaythrough", onVideoReady);
 
     const handleVisibility = () => {
       if (document.visibilityState === "visible" && video.paused) {
-        tryPlay();
+        onVideoReady();
       }
     };
 
+    const handleInteraction = () => {
+      if (video.paused) onVideoReady();
+    };
+
     document.addEventListener("visibilitychange", handleVisibility);
+    document.addEventListener("touchstart", handleInteraction, { passive: true });
+    document.addEventListener("click", handleInteraction, { passive: true });
+    document.addEventListener("keydown", handleInteraction);
 
     return () => {
-      video.removeEventListener("canplay", tryPlay);
+      video.removeEventListener("loadedmetadata", onVideoReady);
+      video.removeEventListener("loadeddata", onVideoReady);
+      video.removeEventListener("canplay", onVideoReady);
+      video.removeEventListener("canplaythrough", onVideoReady);
       document.removeEventListener("visibilitychange", handleVisibility);
+      document.removeEventListener("touchstart", handleInteraction);
+      document.removeEventListener("click", handleInteraction);
+      document.removeEventListener("keydown", handleInteraction);
     };
   }, []);
-
-  useEffect(() => {
-    let frame = 0;
-
-    const update = () => {
-      const section = sectionRef.current;
-      if (!section) return;
-
-      const totalScrollable = Math.max(section.offsetHeight - window.innerHeight, 1);
-      const scrolled = Math.min(Math.max(-section.getBoundingClientRect().top, 0), totalScrollable);
-      const progress = scrolled / totalScrollable;
-      const clamp = (v: number) => Math.min(Math.max(v, 0), 1);
-      const nextVideoOpacity = Math.max(0, 1 - progress * 1.32);
-      const nextHeroOpacity = nextVideoOpacity;
-
-      const riseStart = 0.79;
-      const riseEnd = 0.97;
-      const riseProgress = clamp((progress - riseStart) / (riseEnd - riseStart));
-      const nextMidTranslateY = (1 - riseProgress) * 120;
-      const nextMidOpacity = clamp((progress - (riseStart - 0.03)) / 0.08);
-      const nextTealOpacity = clamp((progress - 0.71) / 0.2);
-
-      setVideoOpacity((prev) => (Math.abs(prev - nextVideoOpacity) < 0.01 ? prev : nextVideoOpacity));
-      setHeroOpacity((prev) => (Math.abs(prev - nextHeroOpacity) < 0.01 ? prev : nextHeroOpacity));
-      setMidTranslateY((prev) => (Math.abs(prev - nextMidTranslateY) < 0.05 ? prev : nextMidTranslateY));
-      setMidOpacity((prev) => (Math.abs(prev - nextMidOpacity) < 0.005 ? prev : nextMidOpacity));
-      setTealOpacity((prev) => (Math.abs(prev - nextTealOpacity) < 0.01 ? prev : nextTealOpacity));
-    };
-
-    const onScroll = () => {
-      if (frame) return;
-      frame = window.requestAnimationFrame(() => {
-        frame = 0;
-        update();
-      });
-    };
-
-    update();
-    window.addEventListener("scroll", onScroll, { passive: true });
-    window.addEventListener("resize", update);
-
-    return () => {
-      if (frame) window.cancelAnimationFrame(frame);
-      window.removeEventListener("scroll", onScroll);
-      window.removeEventListener("resize", update);
-    };
-  }, []);
-
-  const introBullets = [
-    "Personalised insight based on your symptoms and priorities",
-    "Clear, balanced explanations of treatment options",
-    "Designed to support confident, informed decisions",
-  ];
 
   function scrollToTarget(id: string, offset = 20) {
     const el = document.getElementById(id);
@@ -159,12 +142,11 @@ function HeroTop() {
   }
 
   return (
-    <header ref={sectionRef} className="relative isolate h-[225vh] bg-black">
+    <header className="relative isolate h-[140vh] bg-black">
       <div className="sticky top-0 h-screen overflow-hidden">
         <video
           ref={videoRef}
           className="absolute inset-0 h-full w-full object-cover scale-[1.02]"
-          style={{ opacity: videoOpacity }}
           autoPlay
           loop
           muted
@@ -177,18 +159,18 @@ function HeroTop() {
             type="video/mp4"
           />
         </video>
+        <div className="absolute inset-0 bg-black/8 pointer-events-none" />
         <div
-          className="absolute inset-0 bg-black pointer-events-none transition-opacity duration-300"
-          style={{ opacity: 1 - videoOpacity * 0.92 }}
+          aria-hidden="true"
+          className="absolute inset-x-0 bottom-0 h-[30vh] pointer-events-none bg-[linear-gradient(to_bottom,rgba(0,0,0,0)_0%,rgba(0,0,0,0.64)_58%,rgba(0,0,0,1)_100%)]"
         />
         <div
-          className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_50%_18%,rgba(23,132,146,0.56)_0%,rgba(6,58,66,0.54)_34%,rgba(0,0,0,0)_72%)] transition-opacity duration-300"
-          style={{ opacity: tealOpacity }}
+          aria-hidden="true"
+          className="absolute inset-x-0 bottom-0 h-[3px] pointer-events-none bg-black/28 backdrop-blur-[8px]"
         />
 
         <div
           className="relative z-10 max-w-7xl mx-auto px-8 md:px-16 min-h-screen md:min-h-[100svh] py-20 md:py-24 lg:py-28 flex items-center"
-          style={{ opacity: heroOpacity }}
         >
           <div className="w-full max-w-5xl mx-auto text-center px-6 md:px-10 lg:px-14">
             <div className="hero-fade-seq hero-fade-1">
@@ -234,63 +216,81 @@ function HeroTop() {
             </div>
           </div>
         </div>
+      </div>
+    </header>
+  );
+}
 
-        <div className="absolute inset-0 z-20 max-w-7xl mx-auto px-8 md:px-16 min-h-screen md:min-h-[100svh] py-20 md:py-24 lg:py-28 flex items-center pointer-events-none">
-          <div className="w-full max-w-5xl mx-auto px-6 md:px-10 lg:px-14">
-            <div
-              className="will-change-transform"
-              style={{
-                transform: `translate3d(0, ${midTranslateY}px, 0)`,
-                opacity: midOpacity,
-                pointerEvents: midOpacity > 0.92 ? "auto" : "none",
+function IntroFelicitySection() {
+  const introBullets = [
+    "Personalised insight based on your symptoms and priorities",
+    "Clear, balanced explanations of treatment options",
+    "Designed to support confident, informed decisions",
+  ];
+
+  function scrollToTarget(id: string, offset = 20) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const top = el.getBoundingClientRect().top + window.scrollY - offset;
+    window.scrollTo({ top, behavior: "smooth" });
+  }
+
+  return (
+    <section id="introducing-felicity" className="relative bg-black">
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-x-0 top-[calc(30vh+1.5rem)] z-0 h-[30rem] bg-[radial-gradient(ellipse_at_50%_0%,rgba(67,228,237,0.36)_0%,rgba(31,132,148,0.23)_30%,rgba(14,74,83,0.16)_50%,rgba(0,0,0,0)_76%)] blur-3xl"
+      />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-x-0 top-[calc(30vh+20rem)] z-0 h-[22rem] bg-[radial-gradient(ellipse_at_50%_92%,rgba(135,206,235,0.25)_0%,rgba(108,186,224,0.15)_34%,rgba(52,112,148,0.1)_54%,rgba(0,0,0,0)_78%)] blur-3xl"
+      />
+      <div aria-hidden="true" className="h-[30vh]" />
+      <div className="relative z-10 max-w-7xl mx-auto px-8 md:px-16 pb-20 md:pb-24 lg:pb-28">
+        <div className="w-full max-w-5xl mx-auto px-6 md:px-10 lg:px-14">
+          <h2
+            className="-mt-4 md:-mt-6 text-[2.7rem] md:text-[3.85rem] font-semibold text-[#faf5d9] text-center"
+            style={{ fontFamily: "var(--font-display)" }}
+          >
+            Introducing Felicity AI.
+          </h2>
+
+          <div
+            className="mt-8 w-full rounded-3xl border border-white/20 bg-white/[0.09] backdrop-blur-xl shadow-[0_18px_45px_rgba(0,0,0,0.4)] p-6 md:p-8 text-left"
+            style={{ fontFamily: "var(--font-display)" }}
+          >
+            <p className="text-3xl md:text-4xl text-[#faf5d9] leading-tight">
+              Intelligent guidance. Thoughtfully delivered.
+            </p>
+            <ul className="mt-5 list-disc pl-5 space-y-3 text-[20px] md:text-[21px] text-[#faf5d9]/93 leading-relaxed marker:text-[#faf5d9]/93">
+              {introBullets.map((bullet) => (
+                <li key={bullet}>{bullet}</li>
+              ))}
+            </ul>
+            <p className="mt-5 text-[19px] md:text-xl text-[#faf5d9]/83 leading-relaxed">
+              Built around shared decision-making and current clinical best practice.
+            </p>
+            <a
+              href="#how-felicity-works"
+              onClick={(e) => {
+                e.preventDefault();
+                window.dispatchEvent(new Event("oab-open-how-felicity"));
+                scrollToTarget("how-felicity-works");
               }}
+              className="inline-block mt-5 text-lg text-[#8ad4ff] hover:text-[#b7e7ff] transition"
             >
-              <h2
-                className="-mt-4 md:-mt-6 text-[2.7rem] md:text-[3.85rem] font-semibold text-[#faf5d9] text-center"
-                style={{ fontFamily: "var(--font-display)" }}
-              >
-                Introducing Felicity AI.
-              </h2>
-
-              <div
-                className="mt-8 w-full rounded-3xl border border-white/20 bg-white/[0.09] backdrop-blur-xl shadow-[0_18px_45px_rgba(0,0,0,0.4)] p-6 md:p-8 text-left"
-                style={{ fontFamily: "var(--font-display)" }}
-              >
-                <p className="text-3xl md:text-4xl text-[#faf5d9] leading-tight">
-                  Intelligent guidance. Thoughtfully delivered.
-                </p>
-                <ul className="mt-5 list-disc pl-5 space-y-3 text-[20px] md:text-[21px] text-[#faf5d9]/93 leading-relaxed marker:text-[#faf5d9]/93">
-                  {introBullets.map((bullet) => (
-                    <li key={bullet}>{bullet}</li>
-                  ))}
-                </ul>
-                <p className="mt-5 text-[19px] md:text-xl text-[#faf5d9]/83 leading-relaxed">
-                  Built around shared decision-making and current clinical best practice.
-                </p>
-                <a
-                  href="#how-felicity-works"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    window.dispatchEvent(new Event("oab-open-how-felicity"));
-                    scrollToTarget("how-felicity-works");
-                  }}
-                  className="inline-block mt-5 text-lg text-[#8ad4ff] hover:text-[#b7e7ff] transition"
-                >
-                  {"→ See how Felicity works"}
-                </a>
-              </div>
-              <p
-                className="mt-24 text-center text-3xl md:text-4xl text-[#faf5d9]/88"
-                style={{ fontFamily: "var(--font-display)" }}
-              >
-                Start your consultation below:
-              </p>
-            </div>
+              {"→ See how Felicity works"}
+            </a>
           </div>
+          <p
+            className="mt-24 text-center text-3xl md:text-4xl text-[#faf5d9]/88"
+            style={{ fontFamily: "var(--font-display)" }}
+          >
+            Start your consultation below:
+          </p>
         </div>
       </div>
-      <span id="introducing-felicity" className="absolute top-[136vh] h-px w-px pointer-events-none" />
-    </header>
+    </section>
   );
 }
 
@@ -1398,9 +1398,9 @@ export default function Page() {
     <main className="bg-black">
       <DevExpose />
       <HeroTop />
+      <IntroFelicitySection />
       <ChatSection />
       <InfoTabs />
     </main>
   );
 }
-
