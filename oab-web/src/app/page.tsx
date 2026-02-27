@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ensureAnonUser } from "@/lib/firebase";
 import ReactMarkdown from "react-markdown";
 
@@ -28,8 +28,39 @@ const THREAD_IDLE_MS = 45 * 60 * 1000; // 45 minutes: start a fresh thread after
 
 type Message = { role: "user" | "assistant"; content: string };
 
+const HOW_FELICITY_ACCORDION_ITEMS: Array<{ title: string; points: string[] }> = [
+  {
+    title: "What Felicity asks",
+    points: [
+      "Your bladder symptoms (frequency, urgency, leakage, night-time waking)",
+      "The impact on daily life and what matters most to you",
+      "Relevant factors that influence treatment choice (for example tolerability, preferences, and practical considerations)",
+    ],
+  },
+  {
+    title: "What you receive",
+    points: [
+      "A plain-English summary of your symptom pattern",
+      "A tailored overview of suitable treatment pathways",
+      "A structured report you can save or share with your clinician",
+    ],
+  },
+  {
+    title: "Important note",
+    points: [
+      "Felicity provides information and decision support - it does not replace medical assessment. If you have severe pain, blood in the urine, recurrent infections, or rapidly worsening symptoms, seek clinical review.",
+    ],
+  },
+];
+
 function HeroTop() {
+  const sectionRef = useRef<HTMLElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [videoOpacity, setVideoOpacity] = useState(1);
+  const [heroOpacity, setHeroOpacity] = useState(1);
+  const [midTranslateY, setMidTranslateY] = useState(120);
+  const [midOpacity, setMidOpacity] = useState(0);
+  const [tealOpacity, setTealOpacity] = useState(0);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -67,73 +98,198 @@ function HeroTop() {
     };
   }, []);
 
+  useEffect(() => {
+    let frame = 0;
+
+    const update = () => {
+      const section = sectionRef.current;
+      if (!section) return;
+
+      const totalScrollable = Math.max(section.offsetHeight - window.innerHeight, 1);
+      const scrolled = Math.min(Math.max(-section.getBoundingClientRect().top, 0), totalScrollable);
+      const progress = scrolled / totalScrollable;
+      const clamp = (v: number) => Math.min(Math.max(v, 0), 1);
+      const nextVideoOpacity = Math.max(0, 1 - progress * 1.32);
+      const nextHeroOpacity = nextVideoOpacity;
+
+      const riseStart = 0.79;
+      const riseEnd = 0.97;
+      const riseProgress = clamp((progress - riseStart) / (riseEnd - riseStart));
+      const nextMidTranslateY = (1 - riseProgress) * 120;
+      const nextMidOpacity = clamp((progress - (riseStart - 0.03)) / 0.08);
+      const nextTealOpacity = clamp((progress - 0.71) / 0.2);
+
+      setVideoOpacity((prev) => (Math.abs(prev - nextVideoOpacity) < 0.01 ? prev : nextVideoOpacity));
+      setHeroOpacity((prev) => (Math.abs(prev - nextHeroOpacity) < 0.01 ? prev : nextHeroOpacity));
+      setMidTranslateY((prev) => (Math.abs(prev - nextMidTranslateY) < 0.05 ? prev : nextMidTranslateY));
+      setMidOpacity((prev) => (Math.abs(prev - nextMidOpacity) < 0.005 ? prev : nextMidOpacity));
+      setTealOpacity((prev) => (Math.abs(prev - nextTealOpacity) < 0.01 ? prev : nextTealOpacity));
+    };
+
+    const onScroll = () => {
+      if (frame) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        update();
+      });
+    };
+
+    update();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", update);
+
+    return () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", update);
+    };
+  }, []);
+
+  const introBullets = [
+    "Personalised insight based on your symptoms and priorities",
+    "Clear, balanced explanations of treatment options",
+    "Designed to support confident, informed decisions",
+  ];
+
+  function scrollToTarget(id: string, offset = 20) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const top = el.getBoundingClientRect().top + window.scrollY - offset;
+    window.scrollTo({ top, behavior: "smooth" });
+  }
+
   return (
-    <header className="relative isolate w-full min-h-screen md:min-h-[100svh] border-b border-white/15 overflow-hidden">
-      <video
-        ref={videoRef}
-        className="absolute inset-0 h-full w-full object-cover scale-[1.02]"
-        autoPlay
-        loop
-        muted
-        playsInline
-        preload="auto"
-        aria-hidden="true"
-      >
-        <source
-          src="https://d8j0ntlcm91z4.cloudfront.net/user_39w19TCI1XWyxZ4H2GlXo141kWt/hf_20260221_180907_303b6b72-0efa-479c-932d-6406d0e56a51.mp4"
-          type="video/mp4"
+    <header ref={sectionRef} className="relative isolate h-[225vh] bg-black">
+      <div className="sticky top-0 h-screen overflow-hidden">
+        <video
+          ref={videoRef}
+          className="absolute inset-0 h-full w-full object-cover scale-[1.02]"
+          style={{ opacity: videoOpacity }}
+          autoPlay
+          loop
+          muted
+          playsInline
+          preload="auto"
+          aria-hidden="true"
+        >
+          <source
+            src="https://d8j0ntlcm91z4.cloudfront.net/user_39w19TCI1XWyxZ4H2GlXo141kWt/hf_20260221_180907_303b6b72-0efa-479c-932d-6406d0e56a51.mp4"
+            type="video/mp4"
+          />
+        </video>
+        <div
+          className="absolute inset-0 bg-black pointer-events-none transition-opacity duration-300"
+          style={{ opacity: 1 - videoOpacity * 0.92 }}
         />
-      </video>
+        <div
+          className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_50%_18%,rgba(23,132,146,0.56)_0%,rgba(6,58,66,0.54)_34%,rgba(0,0,0,0)_72%)] transition-opacity duration-300"
+          style={{ opacity: tealOpacity }}
+        />
 
-      <div className="relative z-10 max-w-7xl mx-auto px-8 md:px-16 min-h-screen md:min-h-[100svh] py-20 md:py-24 lg:py-28 flex items-center">
-        <div className="w-full max-w-5xl mx-auto text-center px-6 md:px-10 lg:px-14">
-          <div className="hero-fade-seq hero-fade-1">
-            <div
-              className="text-xs md:text-sm tracking-[0.2em] uppercase text-[#faf5d9]/85"
-              style={{ fontFamily: "var(--font-display)" }}
-            >
-              Patient‑centred&nbsp;|&nbsp;Evidence‑based
+        <div
+          className="relative z-10 max-w-7xl mx-auto px-8 md:px-16 min-h-screen md:min-h-[100svh] py-20 md:py-24 lg:py-28 flex items-center"
+          style={{ opacity: heroOpacity }}
+        >
+          <div className="w-full max-w-5xl mx-auto text-center px-6 md:px-10 lg:px-14">
+            <div className="hero-fade-seq hero-fade-1">
+              <div
+                className="text-xs md:text-sm tracking-[0.2em] uppercase text-[#faf5d9]/85"
+                style={{ fontFamily: "var(--font-display)" }}
+              >
+                Patient‑centred&nbsp;|&nbsp;Evidence‑based
+              </div>
+              <h1
+                className="mt-6 text-5xl sm:text-6xl md:text-7xl lg:text-[5.6rem] leading-[1.06] text-[#faf5d9] drop-shadow-[0_4px_22px_rgba(0,0,0,0.45)]"
+                style={{ fontFamily: "var(--font-display)" }}
+              >
+                Empowering Bladder Health
+              </h1>
             </div>
-            <h1
-              className="mt-6 text-5xl sm:text-6xl md:text-7xl lg:text-[5.6rem] leading-[1.06] text-[#faf5d9] drop-shadow-[0_4px_22px_rgba(0,0,0,0.45)]"
+            <p
+              className="hero-fade-seq hero-fade-2 mt-6 mx-auto text-sm sm:text-base md:text-lg lg:text-xl md:whitespace-nowrap text-[#faf5d9]/78 drop-shadow-[0_2px_8px_rgba(0,0,0,0.3)]"
               style={{ fontFamily: "var(--font-display)" }}
             >
-              Empowering Bladder Health
-            </h1>
-          </div>
-          <p
-            className="hero-fade-seq hero-fade-2 mt-6 mx-auto text-sm sm:text-base md:text-lg lg:text-xl md:whitespace-nowrap text-[#faf5d9]/78 drop-shadow-[0_2px_8px_rgba(0,0,0,0.3)]"
-            style={{ fontFamily: "var(--font-display)" }}
-          >
-            Helping you make decisions about treatment for overactive bladder.
-          </p>
+              Helping you make decisions about treatment for overactive bladder.
+            </p>
 
-          <div className="hero-fade-seq hero-fade-3 mt-10 flex flex-wrap items-center justify-center gap-4 md:gap-5">
-            <button
-              onClick={() => {
-                document
-                  .getElementById("chat-section")
-                  ?.scrollIntoView({ behavior: "smooth" });
+            <div className="hero-fade-seq hero-fade-3 mt-10 flex flex-wrap items-center justify-center gap-4 md:gap-5">
+              <button
+                onClick={() => {
+                  scrollToTarget("introducing-felicity");
+                }}
+                className="hero-cta-gradient hero-cta-warm"
+                style={{ fontFamily: "var(--font-display)" }}
+              >
+                Start your assessment
+              </button>
+              <button
+                onClick={() => {
+                  scrollToTarget("card-explainers");
+                }}
+                className="hero-cta-gradient hero-cta-cool"
+                style={{ fontFamily: "var(--font-display)" }}
+              >
+                Learn more
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="absolute inset-0 z-20 max-w-7xl mx-auto px-8 md:px-16 min-h-screen md:min-h-[100svh] py-20 md:py-24 lg:py-28 flex items-center pointer-events-none">
+          <div className="w-full max-w-5xl mx-auto px-6 md:px-10 lg:px-14">
+            <div
+              className="will-change-transform"
+              style={{
+                transform: `translate3d(0, ${midTranslateY}px, 0)`,
+                opacity: midOpacity,
+                pointerEvents: midOpacity > 0.92 ? "auto" : "none",
               }}
-              className="hero-cta-gradient hero-cta-warm"
-              style={{ fontFamily: "var(--font-display)" }}
             >
-              Start your assessment
-            </button>
-            <button
-              onClick={() => {
-                document
-                  .getElementById("info-section")
-                  ?.scrollIntoView({ behavior: "smooth" });
-              }}
-              className="hero-cta-gradient hero-cta-cool"
-              style={{ fontFamily: "var(--font-display)" }}
-            >
-              Learn more
-            </button>
+              <h2
+                className="-mt-4 md:-mt-6 text-[2.7rem] md:text-[3.85rem] font-semibold text-[#faf5d9] text-center"
+                style={{ fontFamily: "var(--font-display)" }}
+              >
+                Introducing Felicity AI.
+              </h2>
+
+              <div
+                className="mt-8 w-full rounded-3xl border border-white/20 bg-white/[0.09] backdrop-blur-xl shadow-[0_18px_45px_rgba(0,0,0,0.4)] p-6 md:p-8 text-left"
+                style={{ fontFamily: "var(--font-display)" }}
+              >
+                <p className="text-3xl md:text-4xl text-[#faf5d9] leading-tight">
+                  Intelligent guidance. Thoughtfully delivered.
+                </p>
+                <ul className="mt-5 list-disc pl-5 space-y-3 text-[20px] md:text-[21px] text-[#faf5d9]/93 leading-relaxed marker:text-[#faf5d9]/93">
+                  {introBullets.map((bullet) => (
+                    <li key={bullet}>{bullet}</li>
+                  ))}
+                </ul>
+                <p className="mt-5 text-[19px] md:text-xl text-[#faf5d9]/83 leading-relaxed">
+                  Built around shared decision-making and current clinical best practice.
+                </p>
+                <a
+                  href="#how-felicity-works"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    window.dispatchEvent(new Event("oab-open-how-felicity"));
+                    scrollToTarget("how-felicity-works");
+                  }}
+                  className="inline-block mt-5 text-lg text-[#8ad4ff] hover:text-[#b7e7ff] transition"
+                >
+                  {"→ See how Felicity works"}
+                </a>
+              </div>
+              <p
+                className="mt-24 text-center text-3xl md:text-4xl text-[#faf5d9]/88"
+                style={{ fontFamily: "var(--font-display)" }}
+              >
+                Start your consultation below:
+              </p>
+            </div>
           </div>
         </div>
       </div>
+      <span id="introducing-felicity" className="absolute top-[136vh] h-px w-px pointer-events-none" />
     </header>
   );
 }
@@ -492,10 +648,15 @@ function ChatPane() {
   return (
     <aside
       id="chat"
-      className="bg-white rounded-2xl shadow-lg border border-slate-200 p-4 md:p-5"
+      className="relative overflow-hidden rounded-3xl border border-[#d7deea]/90 bg-[linear-gradient(142deg,rgba(242,245,250,0.9)_0%,rgba(226,232,240,0.86)_46%,rgba(244,247,251,0.9)_100%)] shadow-[inset_0_1px_0_rgba(255,255,255,0.7),inset_0_-2px_0_rgba(119,132,152,0.28),0_22px_70px_rgba(0,0,0,0.3)] backdrop-blur-[1px] p-4 md:p-5"
     >
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-[2px] rounded-[calc(1.5rem-2px)] bg-[linear-gradient(148deg,rgba(255,255,255,0.2)_0%,rgba(255,255,255,0.08)_18%,rgba(255,255,255,0)_42%,rgba(22,35,52,0.12)_100%)]"
+      />
+      <div className="relative z-10">
       <div className="mb-3 flex items-center justify-between">
-        <span className="text-xs text-slate-500">
+        <span className="text-xs text-slate-600">
           {threadId
             ? "Continuing your current conversation."
             : "New conversation started."}
@@ -503,7 +664,7 @@ function ChatPane() {
         <button
           type="button"
           onClick={resetConversation}
-          className="text-xs px-2 py-1 rounded-md border border-slate-300 hover:bg-slate-50 text-[#02052e]"
+          className="text-xs px-2 py-1 rounded-md border border-slate-300 hover:bg-slate-100 text-slate-700 transition"
           aria-label="Start a new conversation"
           title="Start a new conversation"
         >
@@ -512,7 +673,7 @@ function ChatPane() {
       </div>
       <div
         ref={listRef}
-        className="h-[55vh] overflow-y-auto space-y-3 pr-1 overscroll-contain"
+        className="h-[calc(55vh+5px)] overflow-y-auto space-y-3 pr-1 overscroll-contain"
       >
         {messages.map((m, i) => (
           <div
@@ -529,47 +690,59 @@ function ChatPane() {
                 <div className="h-8 w-8 flex-shrink-0 rounded-full bg-[#02052e] flex items-center justify-center text-white text-sm">
                   👩‍⚕️
                 </div>
-                <div className="bg-[#f2f2f2] text-[#02052e] p-3 rounded-2xl flex-1">
-                  <div className="text-[10px] uppercase tracking-wide opacity-60 mb-1">
-                    Felicity
-                  </div>
-                  <div className="leading-relaxed prose prose-sm max-w-none">
-                    <ReactMarkdown
-                      components={{
-                        a: (props) => (
-                          <a
-                            {...(props as React.AnchorHTMLAttributes<HTMLAnchorElement>)}
-                            className="underline text-blue-600 hover:text-blue-700"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                          />
-                        ),
-                        p: (props) => (
-                          <p
-                            {...(props as React.HTMLAttributes<HTMLParagraphElement>)}
-                            className="whitespace-pre-wrap leading-relaxed"
-                          />
-                        ),
-                        li: (props) => (
-                          <li
-                            {...(props as React.LiHTMLAttributes<HTMLLIElement>)}
-                            className="whitespace-pre-wrap leading-relaxed"
-                          />
-                        ),
-                      }}
-                    >
-                      {normalizeAssistantText(m.content)}
-                    </ReactMarkdown>
+                <div className="relative overflow-hidden flex-1 rounded-2xl border border-[#d9e0ea]/85 bg-[linear-gradient(146deg,rgba(246,248,252,0.98)_0%,rgba(236,241,247,0.92)_50%,rgba(247,249,252,0.96)_100%)] text-[#02052e] p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.78),inset_0_-1px_0_rgba(128,141,161,0.2),0_8px_22px_rgba(4,12,26,0.1)]">
+                  <div
+                    aria-hidden="true"
+                    className="pointer-events-none absolute inset-[1px] rounded-[calc(1rem-1px)] bg-[linear-gradient(150deg,rgba(255,255,255,0.18)_0%,rgba(255,255,255,0.08)_18%,rgba(255,255,255,0)_44%,rgba(21,33,49,0.08)_100%)]"
+                  />
+                  <div className="relative z-10">
+                    <div className="text-[10px] uppercase tracking-wide opacity-60 mb-1">
+                      Felicity
+                    </div>
+                    <div className="leading-relaxed prose prose-sm max-w-none">
+                      <ReactMarkdown
+                        components={{
+                          a: (props) => (
+                            <a
+                              {...(props as React.AnchorHTMLAttributes<HTMLAnchorElement>)}
+                              className="underline text-blue-600 hover:text-blue-700"
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            />
+                          ),
+                          p: (props) => (
+                            <p
+                              {...(props as React.HTMLAttributes<HTMLParagraphElement>)}
+                              className="whitespace-pre-wrap leading-relaxed"
+                            />
+                          ),
+                          li: (props) => (
+                            <li
+                              {...(props as React.LiHTMLAttributes<HTMLLIElement>)}
+                              className="whitespace-pre-wrap leading-relaxed"
+                            />
+                          ),
+                        }}
+                      >
+                        {normalizeAssistantText(m.content)}
+                      </ReactMarkdown>
+                    </div>
                   </div>
                 </div>
               </div>
             ) : (
-              <div className="max-w-[85%] bg-[#02052e] text-white p-3 rounded-2xl">
-                <div className="text-[10px] uppercase tracking-wide opacity-60 mb-1">
-                  You
-                </div>
-                <div className="whitespace-pre-wrap leading-relaxed">
-                  {m.content}
+              <div className="relative overflow-hidden max-w-[85%] rounded-2xl border border-[#2c4268]/88 bg-[linear-gradient(152deg,rgba(2,6,43,0.98)_0%,rgba(4,16,61,0.96)_52%,rgba(7,31,88,0.96)_100%)] text-white p-3 shadow-[inset_0_1px_0_rgba(156,180,228,0.24),inset_0_-1px_0_rgba(1,4,18,0.5),0_10px_24px_rgba(0,0,0,0.28)]">
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-[1px] rounded-[calc(1rem-1px)] bg-[linear-gradient(148deg,rgba(160,189,236,0.14)_0%,rgba(160,189,236,0.05)_18%,rgba(9,25,64,0)_44%,rgba(0,0,0,0.2)_100%)]"
+                />
+                <div className="relative z-10">
+                  <div className="text-[10px] uppercase tracking-wide opacity-60 mb-1">
+                    You
+                  </div>
+                  <div className="whitespace-pre-wrap leading-relaxed">
+                    {m.content}
+                  </div>
                 </div>
               </div>
             )}
@@ -582,109 +755,255 @@ function ChatPane() {
         )}
       </div>
 
-      <form onSubmit={sendMessage} className="mt-10 mb-4 relative flex items-end">
-        <textarea
-          ref={taRef}
-          rows={1}
-          className="flex-1 rounded-xl border border-slate-300 px-4 py-3 pr-12 focus:outline-none focus:ring-2 focus:ring-blue-300 placeholder:text-[#d9d9d9] text-[#02052e] resize-none bg-white"
-          placeholder="Type a message..."
-          value={input}
-          onChange={(e) => {
-            setInput(e.target.value);
-            if (taRef.current) {
-              taRef.current.style.height = "auto";
-              taRef.current.style.height = taRef.current.scrollHeight + "px";
-            }
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              // submit on Enter, newline with Shift+Enter
-              // trigger submit
-              (e.currentTarget.form as HTMLFormElement)?.requestSubmit();
-            }
-          }}
-          disabled={busy}
-        />
-        <button
-          aria-label="Send"
-          className="absolute right-1.5 bottom-1 h-10.5 w-10.5 inline-flex items-center justify-center rounded-lg bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
-          disabled={busy}
-        >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            viewBox="0 0 24 24"
-            fill="currentColor"
-            className="h-5 w-5"
+      <form onSubmit={sendMessage} className="mt-10 mb-4 px-[5px]">
+        <div className="relative w-full rounded-xl border border-[#d5dbe6] bg-[linear-gradient(145deg,rgba(255,255,255,0.99)_0%,rgba(245,248,252,0.96)_100%)] shadow-[inset_0_1px_0_rgba(255,255,255,0.9),inset_0_-1px_0_rgba(134,150,173,0.25),0_8px_18px_rgba(2,10,30,0.08)] focus-within:border-[#c7d0de]">
+          <textarea
+            ref={taRef}
+            rows={1}
+            className="block w-full min-h-[52px] resize-none bg-transparent px-4 py-3 pr-[52px] text-[#02052e] placeholder:text-[#b8c0cf] focus:outline-none"
+            placeholder="Type a message..."
+            value={input}
+            onChange={(e) => {
+              setInput(e.target.value);
+              if (taRef.current) {
+                taRef.current.style.height = "auto";
+                taRef.current.style.height = taRef.current.scrollHeight + "px";
+              }
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                // submit on Enter, newline with Shift+Enter
+                // trigger submit
+                (e.currentTarget.form as HTMLFormElement)?.requestSubmit();
+              }
+            }}
+            disabled={busy}
+          />
+          <button
+            aria-label="Send"
+            className="absolute right-[8.5px] top-1/2 h-[40px] w-[40px] -translate-y-1/2 inline-flex items-center justify-center rounded-lg overflow-hidden border border-[#2d4370]/90 bg-[linear-gradient(150deg,rgba(2,8,46,0.98)_0%,rgba(5,18,70,0.97)_52%,rgba(9,35,98,0.96)_100%)] text-white shadow-[inset_0_1px_0_rgba(163,188,231,0.26),inset_0_-1px_0_rgba(1,4,20,0.56),0_10px_22px_rgba(0,0,0,0.3)] transition hover:brightness-105 disabled:opacity-50"
+            disabled={busy}
           >
-            <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
-          </svg>
-        </button>
+            <span
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-[1px] rounded-[calc(0.5rem-1px)] bg-[linear-gradient(145deg,rgba(170,198,242,0.15)_0%,rgba(170,198,242,0.06)_18%,rgba(7,22,61,0)_44%,rgba(0,0,0,0.22)_100%)]"
+            />
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="currentColor"
+              className="relative z-10 h-5 w-5"
+            >
+              <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+            </svg>
+          </button>
+        </div>
       </form>
+      </div>
     </aside>
   );
 }
 
 function ChatSection() {
+  const [howOpen, setHowOpen] = useState(true);
+  const [openItems, setOpenItems] = useState<Record<number, boolean>>({
+    0: false,
+    1: false,
+    2: false,
+  });
+  const [itemHeights, setItemHeights] = useState<number[]>([]);
+  const howSectionRef = useRef<HTMLDivElement | null>(null);
+  const itemShellRefs = useRef<Array<HTMLDivElement | null>>([]);
+  const itemContentRefs = useRef<Array<HTMLDivElement | null>>([]);
+
+  const recalcHeights = useCallback(() => {
+    const nextItemHeights = HOW_FELICITY_ACCORDION_ITEMS.map(
+      (_, idx) => itemContentRefs.current[idx]?.scrollHeight ?? 0
+    );
+    setItemHeights((prev) => {
+      if (
+        prev.length === nextItemHeights.length &&
+        prev.every((height, idx) => Math.abs(height - nextItemHeights[idx]) < 1)
+      ) {
+        return prev;
+      }
+      return nextItemHeights;
+    });
+  }, []);
+
+  useEffect(() => {
+    const raf = window.requestAnimationFrame(recalcHeights);
+    return () => window.cancelAnimationFrame(raf);
+  }, [howOpen, openItems, recalcHeights]);
+
+  useEffect(() => {
+    const onResize = () => recalcHeights();
+    const onOpenHow = () => {
+      setHowOpen(true);
+      window.requestAnimationFrame(() => {
+        howSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    };
+    window.addEventListener("resize", onResize);
+    window.addEventListener("oab-open-how-felicity", onOpenHow as EventListener);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("oab-open-how-felicity", onOpenHow as EventListener);
+    };
+  }, [recalcHeights]);
+
+  function toggleHow() {
+    setHowOpen((prev) => {
+      const next = !prev;
+      if (next) {
+        window.requestAnimationFrame(() => {
+          howSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+        });
+      }
+      return next;
+    });
+  }
+
+  function toggleInner(index: number) {
+    setOpenItems((prev) => ({
+      ...prev,
+      [index]: !prev[index],
+    }));
+    window.requestAnimationFrame(() => {
+      itemShellRefs.current[index]?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+  }
+
   return (
-    <section
-      id="chat-section"
-      className="py-20 md:py-20"
-      style={{ background: "linear-gradient(160deg, #01333d, black)" }}
-    >
-      <div className="max-w-6xl mx-auto px-6 md:px-10">
-        <h2
-          className="text-3xl md:text-4xl font-semibold text-[#faf5d9] mb-10"
+    <section id="chat-section" className="relative pb-24 md:pb-28 bg-black">
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute -inset-8 bg-[linear-gradient(290deg,rgba(0,0,0,1)_0%,rgba(0,0,0,0.94)_24%,rgba(0,0,0,0.9)_52%,rgba(0,0,0,0.95)_76%,rgba(0,0,0,1)_100%)] blur-2xl"
+      />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_18%_38%,rgba(172,153,237,0.32)_0%,rgba(172,153,237,0.2)_22%,rgba(40,34,61,0.22)_44%,rgba(0,0,0,0.84)_76%,rgba(0,0,0,1)_100%),radial-gradient(ellipse_at_82%_38%,rgba(67,228,237,0.37)_0%,rgba(67,228,237,0.22)_24%,rgba(20,62,66,0.2)_46%,rgba(0,0,0,0.84)_78%,rgba(0,0,0,1)_100%)] blur-xl"
+      />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_43%_36%,rgba(185,168,246,0.26)_0%,rgba(126,110,185,0.2)_26%,rgba(56,45,90,0.14)_44%,rgba(0,0,0,0.17)_66%,rgba(0,0,0,0.39)_100%),radial-gradient(circle_at_71%_68%,rgba(76,222,236,0.27)_0%,rgba(31,132,148,0.21)_28%,rgba(14,74,83,0.14)_46%,rgba(0,0,0,0.17)_68%,rgba(0,0,0,0.41)_100%)] blur-3xl"
+      />
+      <div className="relative z-10 max-w-7xl mx-auto px-6 md:px-10">
+        <div id="chat-window" className="w-full lg:w-[85.714%] mx-auto">
+          <ChatPane />
+        </div>
+
+        <div
+          id="how-felicity-works"
+          ref={howSectionRef}
+          className="relative overflow-hidden mt-14 md:mt-16 rounded-3xl border border-white/18 bg-black/55 backdrop-blur-xl p-6 md:p-8"
           style={{ fontFamily: "var(--font-display)" }}
         >
-          Introducing, Felicity AI ✨
-        </h2>
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-          {/* Left: chat (2/3) */}
-          <div className="lg:col-span-2">
-            <ChatPane />
-          </div>
-          {/* Right: side copy */}
-          <div className="lg:col-span-1 lg:ml-6">
-            <div className="bg-white/5 border border-white/10 rounded-2xl p-5">
-              <h3
-                className="text-xl font-semibold text-white"
-                style={{ fontFamily: "var(--font-display)" }}
-              >
-                Chat with Felicity, our smart AI assistant.
-              </h3>
-              <div
-                className="mt-3 text-sm text-white"
-                style={{ fontFamily: "var(--font-display)" }}
-              >
+          <div aria-hidden="true" className="pointer-events-none absolute inset-0 bg-black/40" />
+          <div className="relative z-10">
+          <button
+            id="how-felicity-toggle"
+            type="button"
+            onClick={toggleHow}
+            className="w-full px-1 py-1 text-left flex items-center justify-between"
+          >
+            <span className="text-3xl md:text-4xl font-semibold text-[#faf5d9]">
+              How Felicity Works
+            </span>
+            <span
+              className={`text-[#faf5d9]/70 text-4xl leading-none transition-transform duration-500 ${
+                howOpen ? "rotate-45" : ""
+              }`}
+            >
+              +
+            </span>
+          </button>
+
+          <div
+            className={`grid overflow-hidden transition-[grid-template-rows,opacity] duration-500 ease-in-out ${
+              howOpen ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-60"
+            }`}
+          >
+            <div className="min-h-0 pt-5">
+              <p className="text-lg md:text-xl leading-relaxed text-[#faf5d9]/92">
+                Felicity is structured around a patient decision-aid approach used in overactive
+                bladder care. It guides you through a short assessment, then summarises your
+                results in a clear report you can use to support a consultation.
+              </p>
+
+              <div className="mt-6 space-y-3">
+                {HOW_FELICITY_ACCORDION_ITEMS.map((item, idx) => {
+                  const isOpen = !!openItems[idx];
+                  const maxHeight = itemHeights[idx] ?? 0;
+                  return (
+                    <div
+                      key={item.title}
+                      ref={(el) => {
+                        itemShellRefs.current[idx] = el;
+                      }}
+                      className={`rounded-2xl border border-white/15 bg-white/[0.05] ${
+                        isOpen ? "bg-white/[0.08]" : ""
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => toggleInner(idx)}
+                        className="w-full px-5 py-4 flex items-center justify-between text-[#faf5d9] text-xl font-semibold text-left"
+                      >
+                        <span>{item.title}</span>
+                        <span
+                          className={`text-[#faf5d9]/70 text-3xl leading-none transition-transform duration-500 ${
+                            isOpen ? "rotate-45" : ""
+                          }`}
+                        >
+                          +
+                        </span>
+                      </button>
+                      <div
+                        className="overflow-hidden transition-[max-height] duration-500 ease-in-out"
+                        style={{ maxHeight: isOpen ? `${Math.max(maxHeight, 1)}px` : "0px" }}
+                      >
+                        <div
+                          ref={(el) => {
+                            itemContentRefs.current[idx] = el;
+                          }}
+                          className="px-5 pb-5"
+                        >
+                          <ul className="space-y-2 text-base md:text-lg text-[#faf5d9]/90 leading-relaxed">
+                            {item.points.map((point) => (
+                              <li key={point}>- {point}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="mt-7 space-y-3 text-base md:text-lg leading-relaxed text-[#faf5d9]/87">
                 <p>
-                  Get guidance that is friendly, clear and based on the latest
-                  evidence and clinical best‑practice.
+                  Felicity was developed from a validated Patient Decision Aid developed by the
+                  World Federation of Incontinence and Pelvic Problems (WFIPP). The PDF version
+                  can be found here:{" "}
+                  <a
+                    href="https://wfipp.org/overactive-bladder-patient-decision-aid/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline text-[#8ad4ff] hover:text-[#b7e7ff]"
+                  >
+                    https://wfipp.org/overactive-bladder-patient-decision-aid/
+                  </a>
                 </p>
-                <p className="mt-3">
-                  Felicity has been trained on the thoroughly researched OAB
-                  decision aid tool which aims to assess your symptoms, and give
-                  you recommendations based on your preferences.
-                </p>
-                <p className="mt-3">
-                  You can ask her questions, ask for explanations or just have a
-                  chat.
-                </p>
-                <p className="mt-3">
-                  If at any time you want to reset the conversation, simply
-                  press the &quot;New conversation&quot; button at the top and
-                  you can start over. If you just want to change a previous
-                  answer, simply ask Felicity and you can change your answer in
-                  your conversation thread.
-                </p>
-                <p className="mt-3">
-                  At the end, Felicity will give you a link so you can get a
-                  summary of your discussion, your preferred treatment options,
-                  and a list of questions that you may want to ask your doctor
-                  before proceeding with any treatment.
+                <p>
+                  Disclaimer - no patient confidential information is collected during this
+                  conversation and all reports are stored for 48 hours for you to download. After
+                  this time limit, reports are automatically deleted from our servers.
                 </p>
               </div>
             </div>
+          </div>
           </div>
         </div>
       </div>
@@ -703,21 +1022,21 @@ const TABS: Array<{ k: TabKey; label: string; icon: string }> = [
 function InfoTabs() {
   const [active, setActive] = useState<TabKey>("OAB");
   return (
-    <section
-      id="info-section"
-      className="py-16 md:py-20"
-      style={{ background: "linear-gradient(150deg, #d7d8d9, #494a4a)" }}
-    >
-      <div className="max-w-6xl mx-auto px-6 md:px-10">
+    <section id="info-section" className="relative isolate overflow-hidden py-16 md:py-20 bg-transparent">
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_29%_47%,rgba(175,203,239,0.26)_0%,rgba(109,136,173,0.2)_24%,rgba(36,45,60,0.14)_42%,rgba(0,0,0,0)_80%),radial-gradient(circle_at_50%_80%,rgba(87,255,255,0.29)_0%,rgba(42,171,191,0.22)_25%,rgba(20,97,109,0.14)_44%,rgba(0,0,0,0)_82%)] blur-3xl"
+      />
+      <div className="relative z-10 max-w-6xl mx-auto px-6 md:px-10">
         <h2
-          className="text-3xl md:text-4xl font-bold text-slate-900"
+          className="text-3xl md:text-4xl font-bold text-[#faf5d9]"
           style={{ fontFamily: "var(--font-display)" }}
         >
           Clarity first. Peace of mind forever.
         </h2>
 
         {/* Cards row */}
-        <div className="mt-8 grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-10 justify-items-center">
+        <div id="card-explainers" className="mt-8 grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-10 justify-items-center">
           {TABS.map((t) => {
             const isActive = active === t.k;
             return (
@@ -726,10 +1045,8 @@ function InfoTabs() {
                 onClick={() => setActive(t.k)}
                 aria-pressed={isActive}
                 className={[
-                  "w-full max-w-[260px] h-48 md:h-52 rounded-2xl border transition-all text-center flex flex-col items-center justify-start p-4",
-                  isActive
-                    ? "bg-[#02052e] text-white border-[#02052e] shadow-lg ring-1 ring-[#02052e]/30"
-                    : "bg-white text-[#02052e] border-[#02052e]/40 hover:bg-[#f8f9fa]",
+                  "info-card hero-cta-gradient w-full max-w-[260px] h-48 md:h-52 text-center flex flex-col items-center justify-start p-4",
+                  isActive ? "info-card-selected" : "hero-cta-warm",
                 ].join(" ")}
                 style={{ fontFamily: "var(--font-display)" }}
               >
@@ -743,12 +1060,12 @@ function InfoTabs() {
         </div>
 
         <div
-          className="mt-12 md:mt-14 text-slate-800 leading-relaxed bg-white/80 rounded-xl p-6 border border-white/60 text-[17px] md:text-[18px]"
+          className="info-panel-luxe mt-12 md:mt-14 text-slate-800 leading-relaxed rounded-xl p-6 text-[18px] md:text-[19px]"
           style={{ fontFamily: "var(--font-display)" }}
         >
           {active === "OAB" && (
             <div>
-              <p className="text-[20px] md:text-[22px] font-semibold">
+              <p className="text-[22px] md:text-[24px] font-semibold">
                 <strong>What is Overactive Bladder (OAB)?</strong>
               </p>
               <p className="mt-3">
@@ -782,7 +1099,7 @@ function InfoTabs() {
           )}
           {active === "behaviour" && (
             <div>
-              <p className="text-[20px] md:text-[22px] font-semibold">
+              <p className="text-[22px] md:text-[24px] font-semibold">
                 <strong>Behaviour and Lifestyle Modifications</strong>
               </p>
               <p className="mt-3">
@@ -825,7 +1142,7 @@ function InfoTabs() {
           )}
           {active === "meds" && (
             <div>
-              <p className="text-[20px] md:text-[22px] font-semibold">
+              <p className="text-[22px] md:text-[24px] font-semibold">
                 <strong>Medication Treatment for OAB</strong>
               </p>
               <p className="mt-3">
@@ -863,7 +1180,7 @@ function InfoTabs() {
           )}
           {active === "advanced" && (
             <div>
-              <p className="text-[20px] md:text-[22px] font-semibold">
+              <p className="text-[22px] md:text-[24px] font-semibold">
                 <strong>Further Treatments for OAB</strong>
               </p>
               <p className="mt-3">
@@ -906,16 +1223,16 @@ function InfoTabs() {
         {/* Useful Information and Links (static) */}
         <div className="mt-8 md:mt-10 flex justify-center">
           <div
-            className="w-full md:w-2/3 bg-white/80 rounded-xl p-6 border border-white/60 text-slate-800"
+            className="info-panel-luxe w-full md:w-2/3 rounded-xl p-6 text-slate-800"
             style={{ fontFamily: "var(--font-display)" }}
           >
-            <h3 className="text-[20px] md:text-[22px] font-semibold mb-4 text-center">
-              Useful information &amp; links
+            <h3 className="text-[22px] md:text-[24px] font-semibold mb-4 text-center underline underline-offset-4 decoration-[1.5px]">
+              Useful Information &amp; Links
             </h3>
             <div className="overflow-x-auto">
-              <table className="w-full text-[17px] md:text-[18px]">
+              <table className="w-full text-[18px] md:text-[19px]">
                 <tbody>
-                  <tr className="border-t border-white/60 first:border-t-0">
+                  <tr>
                     <th className="text-left align-top py-2 pr-3 font-semibold">
                       Urinary incontinence
                     </th>
@@ -930,7 +1247,7 @@ function InfoTabs() {
                       </a>
                     </td>
                   </tr>
-                  <tr className="border-t border-white/60">
+                  <tr>
                     <th className="text-left align-top py-2 pr-3 font-semibold">
                       Bladder training
                     </th>
@@ -945,7 +1262,7 @@ function InfoTabs() {
                       </a>
                     </td>
                   </tr>
-                  <tr className="border-t border-white/60">
+                  <tr>
                     <th className="text-left align-top py-2 pr-3 font-semibold">
                       Input/output chart
                     </th>
@@ -960,7 +1277,7 @@ function InfoTabs() {
                       </a>
                     </td>
                   </tr>
-                  <tr className="border-t border-white/60">
+                  <tr>
                     <th className="text-left align-top py-2 pr-3 font-semibold">
                       Pelvic floor (men)
                     </th>
@@ -975,7 +1292,7 @@ function InfoTabs() {
                       </a>
                     </td>
                   </tr>
-                  <tr className="border-t border-white/60">
+                  <tr>
                     <th className="text-left align-top py-2 pr-3 font-semibold">
                       Pelvic floor (women)
                     </th>
@@ -990,7 +1307,7 @@ function InfoTabs() {
                       </a>
                     </td>
                   </tr>
-                  <tr className="border-t border-white/60">
+                  <tr>
                     <th className="text-left align-top py-2 pr-3 font-semibold">
                       OAB treatment options
                     </th>
@@ -1005,7 +1322,7 @@ function InfoTabs() {
                       </a>
                     </td>
                   </tr>
-                  <tr className="border-t border-white/60">
+                  <tr>
                     <th className="text-left align-top py-2 pr-3 font-semibold">
                       Botox injections
                     </th>
@@ -1020,7 +1337,7 @@ function InfoTabs() {
                       </a>
                     </td>
                   </tr>
-                  <tr className="border-t border-white/60">
+                  <tr>
                     <th className="text-left align-top py-2 pr-3 font-semibold">
                       PTNS
                     </th>
@@ -1035,7 +1352,7 @@ function InfoTabs() {
                       </a>
                     </td>
                   </tr>
-                  <tr className="border-t border-white/60">
+                  <tr>
                     <th className="text-left align-top py-2 pr-3 font-semibold">
                       Sacral nerve stimulation
                     </th>
@@ -1050,7 +1367,7 @@ function InfoTabs() {
                       </a>
                     </td>
                   </tr>
-                  <tr className="border-t border-white/60">
+                  <tr>
                     <th className="text-left align-top py-2 pr-3 font-semibold">
                       Enterocystoplasty
                     </th>
@@ -1078,12 +1395,12 @@ function InfoTabs() {
 
 export default function Page() {
   return (
-    <>
+    <main className="bg-black">
       <DevExpose />
       <HeroTop />
       <ChatSection />
       <InfoTabs />
-    </>
+    </main>
   );
 }
 
