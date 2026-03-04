@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ensureAnonUser } from "@/lib/firebase";
 import ReactMarkdown from "react-markdown";
 
@@ -54,166 +54,57 @@ const HOW_FELICITY_ACCORDION_ITEMS: Array<{ title: string; points: string[] }> =
 ];
 
 function HeroTop() {
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
-
-    video.muted = true;
-    video.defaultMuted = true;
-    video.autoplay = true;
-    video.playsInline = true;
-    video.setAttribute("muted", "");
-    video.setAttribute("autoplay", "");
-    video.setAttribute("playsinline", "true");
-    video.setAttribute("webkit-playsinline", "true");
-
-    const tryPlay = () => {
-      if (!video.paused) return;
-      const playPromise = video.play();
-      if (playPromise) {
-        playPromise.catch(() => {
-          // Autoplay can still be blocked by browser/device settings.
-        });
-      }
-    };
-
-    const retryUntilPlaying = () => {
-      let retries = 0;
-      const maxRetries = 8;
-
-      const retry = () => {
-        if (!video.paused || retries >= maxRetries) return;
-        retries += 1;
-        tryPlay();
-        window.setTimeout(retry, 250);
-      };
-
-      retry();
-    };
-
-    const onVideoReady = () => {
-      tryPlay();
-      retryUntilPlaying();
-    };
-
-    if (video.readyState >= 1) {
-      onVideoReady();
-    }
-
-    video.addEventListener("loadedmetadata", onVideoReady);
-    video.addEventListener("loadeddata", onVideoReady);
-    video.addEventListener("canplay", onVideoReady);
-    video.addEventListener("canplaythrough", onVideoReady);
-
-    const handleVisibility = () => {
-      if (document.visibilityState === "visible" && video.paused) {
-        onVideoReady();
-      }
-    };
-
-    const handleInteraction = () => {
-      if (video.paused) onVideoReady();
-    };
-
-    document.addEventListener("visibilitychange", handleVisibility);
-    document.addEventListener("touchstart", handleInteraction, { passive: true });
-    document.addEventListener("click", handleInteraction, { passive: true });
-    document.addEventListener("keydown", handleInteraction);
-
-    return () => {
-      video.removeEventListener("loadedmetadata", onVideoReady);
-      video.removeEventListener("loadeddata", onVideoReady);
-      video.removeEventListener("canplay", onVideoReady);
-      video.removeEventListener("canplaythrough", onVideoReady);
-      document.removeEventListener("visibilitychange", handleVisibility);
-      document.removeEventListener("touchstart", handleInteraction);
-      document.removeEventListener("click", handleInteraction);
-      document.removeEventListener("keydown", handleInteraction);
-    };
-  }, []);
-
-  function scrollToTarget(id: string, offset = 20) {
+  function scrollToTarget(id: string, offset = 20, extraViewportRatio = 0) {
     const el = document.getElementById(id);
     if (!el) return;
-    const top = el.getBoundingClientRect().top + window.scrollY - offset;
+    const extraScroll = window.innerHeight * extraViewportRatio;
+    const top = el.getBoundingClientRect().top + window.scrollY - offset + extraScroll;
     window.scrollTo({ top, behavior: "smooth" });
   }
 
   return (
-    <header className="relative isolate h-[140vh] bg-black">
-      <div className="sticky top-0 h-screen overflow-hidden">
-        <video
-          ref={videoRef}
-          className="absolute inset-0 h-full w-full object-cover scale-[1.02]"
-          autoPlay
-          loop
-          muted
-          playsInline
-          preload="auto"
-          aria-hidden="true"
-        >
-          <source
-            src="https://d8j0ntlcm91z4.cloudfront.net/user_39w19TCI1XWyxZ4H2GlXo141kWt/hf_20260221_180907_303b6b72-0efa-479c-932d-6406d0e56a51.mp4"
-            type="video/mp4"
-          />
-        </video>
-        <div className="absolute inset-0 bg-black/8 pointer-events-none" />
-        <div
-          aria-hidden="true"
-          className="absolute inset-x-0 bottom-0 h-[30vh] pointer-events-none bg-[linear-gradient(to_bottom,rgba(0,0,0,0)_0%,rgba(0,0,0,0.64)_58%,rgba(0,0,0,1)_100%)]"
-        />
-        <div
-          aria-hidden="true"
-          className="absolute inset-x-0 bottom-0 h-[3px] pointer-events-none bg-black/28 backdrop-blur-[8px]"
-        />
+    <header className="relative isolate overflow-hidden bg-black">
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-x-0 top-[14%] z-0 h-[26rem] bg-[radial-gradient(ellipse_at_50%_40%,rgba(67,228,237,0.22)_0%,rgba(31,132,148,0.14)_34%,rgba(14,74,83,0.08)_52%,rgba(0,0,0,0)_78%)] blur-3xl"
+      />
 
-        <div
-          className="relative z-10 max-w-7xl mx-auto px-8 md:px-16 min-h-screen md:min-h-[100svh] py-20 md:py-24 lg:py-28 flex items-center"
-        >
-          <div className="w-full max-w-5xl mx-auto text-center px-6 md:px-10 lg:px-14">
-            <div className="hero-fade-seq hero-fade-1">
-              <div
-                className="text-xs md:text-sm tracking-[0.2em] uppercase text-[#faf5d9]/85"
-                style={{ fontFamily: "var(--font-display)" }}
-              >
-                Patient‑centred&nbsp;|&nbsp;Evidence‑based
-              </div>
-              <h1
-                className="mt-6 text-5xl sm:text-6xl md:text-7xl lg:text-[5.6rem] leading-[1.06] text-[#faf5d9] drop-shadow-[0_4px_22px_rgba(0,0,0,0.45)]"
-                style={{ fontFamily: "var(--font-display)" }}
-              >
-                Empowering Bladder Health
-              </h1>
+      <div className="relative z-10 max-w-7xl mx-auto px-8 md:px-16 min-h-[88svh] py-20 md:py-24 lg:py-28 flex items-center">
+        <div className="w-full max-w-5xl mx-auto text-center px-6 md:px-10 lg:px-14">
+          <div
+            className="hero-overlay-panel mx-auto w-full max-w-4xl rounded-3xl border border-white/20 bg-[#020a1f]/82 backdrop-blur-xl p-7 md:p-10"
+            style={{ fontFamily: "var(--font-display)" }}
+          >
+            <div className="text-xs md:text-sm tracking-[0.2em] uppercase text-[#faf5d9]/85">
+              Patient‑centred&nbsp;|&nbsp;Evidence‑based
             </div>
-            <p
-              className="hero-fade-seq hero-fade-2 mt-6 mx-auto text-sm sm:text-base md:text-lg lg:text-xl md:whitespace-nowrap text-[#faf5d9]/78 drop-shadow-[0_2px_8px_rgba(0,0,0,0.3)]"
-              style={{ fontFamily: "var(--font-display)" }}
-            >
+            <h1 className="hero-metal-text mt-6 text-5xl sm:text-6xl md:text-7xl lg:text-[5.6rem] leading-[1.06] drop-shadow-[0_4px_22px_rgba(0,0,0,0.45)]">
+              Empowering Bladder Health
+            </h1>
+            <p className="mt-6 mx-auto text-sm sm:text-base md:text-lg lg:text-xl md:whitespace-nowrap font-bold text-[#faf5d9]/78 drop-shadow-[0_2px_8px_rgba(0,0,0,0.3)]">
               Helping you make decisions about treatment for overactive bladder.
             </p>
+          </div>
 
-            <div className="hero-fade-seq hero-fade-3 mt-10 flex flex-wrap items-center justify-center gap-4 md:gap-5">
+          <div className="mt-11 flex flex-wrap items-center justify-center gap-4 md:gap-5">
               <button
                 onClick={() => {
-                  scrollToTarget("introducing-felicity");
+                  scrollToTarget("introducing-felicity", 20, 0.2);
                 }}
                 className="hero-cta-gradient hero-cta-warm"
                 style={{ fontFamily: "var(--font-display)" }}
-              >
-                Start your assessment
-              </button>
-              <button
-                onClick={() => {
-                  scrollToTarget("card-explainers");
-                }}
-                className="hero-cta-gradient hero-cta-cool"
-                style={{ fontFamily: "var(--font-display)" }}
-              >
-                Learn more
-              </button>
-            </div>
+            >
+              Start your assessment
+            </button>
+            <button
+              onClick={() => {
+                scrollToTarget("card-explainers");
+              }}
+              className="hero-cta-gradient hero-cta-cool"
+              style={{ fontFamily: "var(--font-display)" }}
+            >
+              Learn more
+            </button>
           </div>
         </div>
       </div>
@@ -806,63 +697,29 @@ function ChatPane() {
 }
 
 function ChatSection() {
-  const [howOpen, setHowOpen] = useState(true);
+  const [howOpen, setHowOpen] = useState(false);
   const [openItems, setOpenItems] = useState<Record<number, boolean>>({
     0: false,
     1: false,
     2: false,
   });
-  const [itemHeights, setItemHeights] = useState<number[]>([]);
   const howSectionRef = useRef<HTMLDivElement | null>(null);
-  const itemShellRefs = useRef<Array<HTMLDivElement | null>>([]);
-  const itemContentRefs = useRef<Array<HTMLDivElement | null>>([]);
-
-  const recalcHeights = useCallback(() => {
-    const nextItemHeights = HOW_FELICITY_ACCORDION_ITEMS.map(
-      (_, idx) => itemContentRefs.current[idx]?.scrollHeight ?? 0
-    );
-    setItemHeights((prev) => {
-      if (
-        prev.length === nextItemHeights.length &&
-        prev.every((height, idx) => Math.abs(height - nextItemHeights[idx]) < 1)
-      ) {
-        return prev;
-      }
-      return nextItemHeights;
-    });
-  }, []);
 
   useEffect(() => {
-    const raf = window.requestAnimationFrame(recalcHeights);
-    return () => window.cancelAnimationFrame(raf);
-  }, [howOpen, openItems, recalcHeights]);
-
-  useEffect(() => {
-    const onResize = () => recalcHeights();
     const onOpenHow = () => {
       setHowOpen(true);
       window.requestAnimationFrame(() => {
         howSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
       });
     };
-    window.addEventListener("resize", onResize);
     window.addEventListener("oab-open-how-felicity", onOpenHow as EventListener);
     return () => {
-      window.removeEventListener("resize", onResize);
       window.removeEventListener("oab-open-how-felicity", onOpenHow as EventListener);
     };
-  }, [recalcHeights]);
+  }, []);
 
   function toggleHow() {
-    setHowOpen((prev) => {
-      const next = !prev;
-      if (next) {
-        window.requestAnimationFrame(() => {
-          howSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-        });
-      }
-      return next;
-    });
+    setHowOpen((prev) => !prev);
   }
 
   function toggleInner(index: number) {
@@ -870,9 +727,6 @@ function ChatSection() {
       ...prev,
       [index]: !prev[index],
     }));
-    window.requestAnimationFrame(() => {
-      itemShellRefs.current[index]?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    });
   }
 
   return (
@@ -912,7 +766,7 @@ function ChatSection() {
               How Felicity Works
             </span>
             <span
-              className={`text-[#faf5d9]/70 text-4xl leading-none transition-transform duration-500 ${
+              className={`text-[#faf5d9]/70 text-4xl leading-none transition-transform duration-200 ${
                 howOpen ? "rotate-45" : ""
               }`}
             >
@@ -920,11 +774,7 @@ function ChatSection() {
             </span>
           </button>
 
-          <div
-            className={`grid overflow-hidden transition-[grid-template-rows,opacity] duration-500 ease-in-out ${
-              howOpen ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-60"
-            }`}
-          >
+          {howOpen && (
             <div className="min-h-0 pt-5">
               <p className="text-lg md:text-xl leading-relaxed text-[#faf5d9]/92">
                 Felicity is structured around a patient decision-aid approach used in overactive
@@ -935,13 +785,9 @@ function ChatSection() {
               <div className="mt-6 space-y-3">
                 {HOW_FELICITY_ACCORDION_ITEMS.map((item, idx) => {
                   const isOpen = !!openItems[idx];
-                  const maxHeight = itemHeights[idx] ?? 0;
                   return (
                     <div
                       key={item.title}
-                      ref={(el) => {
-                        itemShellRefs.current[idx] = el;
-                      }}
                       className={`rounded-2xl border border-white/15 bg-white/[0.05] ${
                         isOpen ? "bg-white/[0.08]" : ""
                       }`}
@@ -953,30 +799,22 @@ function ChatSection() {
                       >
                         <span>{item.title}</span>
                         <span
-                          className={`text-[#faf5d9]/70 text-3xl leading-none transition-transform duration-500 ${
+                          className={`text-[#faf5d9]/70 text-3xl leading-none transition-transform duration-200 ${
                             isOpen ? "rotate-45" : ""
                           }`}
                         >
                           +
                         </span>
                       </button>
-                      <div
-                        className="overflow-hidden transition-[max-height] duration-500 ease-in-out"
-                        style={{ maxHeight: isOpen ? `${Math.max(maxHeight, 1)}px` : "0px" }}
-                      >
-                        <div
-                          ref={(el) => {
-                            itemContentRefs.current[idx] = el;
-                          }}
-                          className="px-5 pb-5"
-                        >
+                      {isOpen && (
+                        <div className="px-5 pb-5">
                           <ul className="space-y-2 text-base md:text-lg text-[#faf5d9]/90 leading-relaxed">
                             {item.points.map((point) => (
                               <li key={point}>- {point}</li>
                             ))}
                           </ul>
                         </div>
-                      </div>
+                      )}
                     </div>
                   );
                 })}
@@ -1003,7 +841,7 @@ function ChatSection() {
                 </p>
               </div>
             </div>
-          </div>
+          )}
           </div>
         </div>
       </div>
