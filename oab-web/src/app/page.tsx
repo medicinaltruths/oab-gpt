@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ensureAnonUser } from "@/lib/firebase";
 import ReactMarkdown from "react-markdown";
 
