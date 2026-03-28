@@ -58,7 +58,7 @@ function HeroTop() {
             <div className="text-xs md:text-sm tracking-[0.2em] uppercase text-[#faf5d9]/85">
               Patient‑centred&nbsp;|&nbsp;Evidence‑based
             </div>
-            <h1 className="hero-metal-text mt-6 text-[2.84rem] sm:text-6xl md:text-7xl lg:text-[5.6rem] leading-[1.06] drop-shadow-[0_4px_22px_rgba(0,0,0,0.45)]">
+            <h1 className="hero-metal-text mt-6 text-[2.65rem] sm:text-6xl md:text-7xl lg:text-[5.6rem] leading-[1.06] drop-shadow-[0_4px_22px_rgba(0,0,0,0.45)]">
               Empowering Bladder Health
             </h1>
             <p className="mt-6 mx-auto text-sm sm:text-base md:text-lg lg:text-xl md:whitespace-nowrap font-bold text-[#faf5d9]/78 drop-shadow-[0_2px_8px_rgba(0,0,0,0.3)]">
@@ -130,15 +130,15 @@ function IntroFelicitySection() {
             className="mt-8 w-full rounded-3xl border border-white/20 bg-white/[0.09] backdrop-blur-xl shadow-[0_18px_45px_rgba(0,0,0,0.4)] p-6 md:p-8 text-left"
             style={{ fontFamily: "var(--font-display)" }}
           >
-            <p className="text-3xl md:text-4xl text-[#faf5d9] leading-tight">
+            <p className="text-[28.67px] md:text-4xl text-[#faf5d9] leading-tight">
               Intelligent guidance. Thoughtfully delivered.
             </p>
-            <ul className="mt-5 list-disc pl-5 space-y-3 text-[20px] md:text-[21px] text-[#faf5d9]/93 leading-relaxed marker:text-[#faf5d9]/93">
+            <ul className="mt-5 list-disc pl-5 space-y-3 text-[18.67px] md:text-[21px] text-[#faf5d9]/93 leading-relaxed marker:text-[#faf5d9]/93">
               {introBullets.map((bullet) => (
                 <li key={bullet}>{bullet}</li>
               ))}
             </ul>
-            <p className="mt-5 text-[19px] md:text-xl text-[#faf5d9]/83 leading-relaxed">
+            <p className="mt-5 text-[17.67px] md:text-xl text-[#faf5d9]/83 leading-relaxed">
               Built around shared decision-making and current clinical best practice.
             </p>
             <a
@@ -148,7 +148,7 @@ function IntroFelicitySection() {
                 window.dispatchEvent(new Event("oab-open-how-felicity"));
                 scrollToTarget("how-felicity-works");
               }}
-              className="inline-block mt-5 text-lg text-[#8ad4ff] hover:text-[#b7e7ff] transition"
+              className="inline-block mt-5 text-[16.67px] md:text-lg text-[#8ad4ff] hover:text-[#b7e7ff] transition"
             >
               {"→ See how Felicity works"}
             </a>
