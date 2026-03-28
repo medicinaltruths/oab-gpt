@@ -948,162 +948,121 @@ function InfoTabs() {
             <h3 className="text-[22px] md:text-[24px] font-semibold mb-4 text-center underline underline-offset-4 decoration-[1.5px]">
               Useful Information &amp; Links
             </h3>
-            <div className="overflow-x-auto">
-              <table className="w-full text-[18px] md:text-[19px]">
-                <tbody>
-                  <tr>
-                    <th className="text-left align-top py-2 pr-3 font-semibold">
-                      Urinary incontinence
-                    </th>
-                    <td className="py-2">
-                      <a
-                        href="https://www.baus.org.uk/patients/conditions/5/incontinence_of_urine"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="underline hover:opacity-80"
-                      >
-                        baus.org.uk/patients/conditions/5/incontinence_of_urine
-                      </a>
-                    </td>
-                  </tr>
-                  <tr>
-                    <th className="text-left align-top py-2 pr-3 font-semibold">
-                      Bladder training
-                    </th>
-                    <td className="py-2">
-                      <a
-                        href="https://www.baus.org.uk/_userfiles/pages/files/Patients/Leaflets/Bladder%20training.pdf"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="underline hover:opacity-80"
-                      >
-                        Bladder training (PDF) — BAUS
-                      </a>
-                    </td>
-                  </tr>
-                  <tr>
-                    <th className="text-left align-top py-2 pr-3 font-semibold">
-                      Input/output chart
-                    </th>
-                    <td className="py-2">
-                      <a
-                        href="https://www.baus.org.uk/_userfiles/pages/files/patients/leaflets/Input%20output%20chart.pdf"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="underline hover:opacity-80"
-                      >
-                        Input/output chart (PDF) — BAUS
-                      </a>
-                    </td>
-                  </tr>
-                  <tr>
-                    <th className="text-left align-top py-2 pr-3 font-semibold">
-                      Pelvic floor (men)
-                    </th>
-                    <td className="py-2">
-                      <a
-                        href="https://www.baus.org.uk/_userfiles/pages/files/Patients/Leaflets/Pelvic%20floor%20XS%20male.pdf"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="underline hover:opacity-80"
-                      >
-                        Pelvic floor exercises — BAUS (PDF)
-                      </a>
-                    </td>
-                  </tr>
-                  <tr>
-                    <th className="text-left align-top py-2 pr-3 font-semibold">
-                      Pelvic floor (women)
-                    </th>
-                    <td className="py-2">
-                      <a
-                        href="https://www.baus.org.uk/_userfiles/pages/files/Patients/Leaflets/Pelvic%20floor%20XS%20female.pdf"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="underline hover:opacity-80"
-                      >
-                        Pelvic floor exercises — BAUS (PDF)
-                      </a>
-                    </td>
-                  </tr>
-                  <tr>
-                    <th className="text-left align-top py-2 pr-3 font-semibold">
-                      OAB treatment options
-                    </th>
-                    <td className="py-2">
-                      <a
-                        href="https://www.baus.org.uk/_userfiles/pages/files/Patients/Leaflets/OAB%20options.pdf"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="underline hover:opacity-80"
-                      >
-                        Treatment options for overactive bladder — BAUS (PDF)
-                      </a>
-                    </td>
-                  </tr>
-                  <tr>
-                    <th className="text-left align-top py-2 pr-3 font-semibold">
-                      Botox injections
-                    </th>
-                    <td className="py-2">
-                      <a
-                        href="https://www.baus.org.uk/_userfiles/pages/files/Patients/Leaflets/Botox.pdf"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="underline hover:opacity-80"
-                      >
-                        Botox injections — BAUS (PDF)
-                      </a>
-                    </td>
-                  </tr>
-                  <tr>
-                    <th className="text-left align-top py-2 pr-3 font-semibold">
-                      PTNS
-                    </th>
-                    <td className="py-2">
-                      <a
-                        href="https://bsug.org.uk/budcms/includes/kcfinder/upload/files/info-leaflets/PTNS%20BSUG%20July%202017.pdf"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="underline hover:opacity-80"
-                      >
-                        Posterior Tibial Nerve Stimulation — BSUG (PDF)
-                      </a>
-                    </td>
-                  </tr>
-                  <tr>
-                    <th className="text-left align-top py-2 pr-3 font-semibold">
-                      Sacral nerve stimulation
-                    </th>
-                    <td className="py-2">
-                      <a
-                        href="https://www.baus.org.uk/_userfiles/pages/files/Patients/Leaflets/Sacral%20neuromodulation.pdf"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="underline hover:opacity-80"
-                      >
-                        Sacral nerve stimulation — BAUS (PDF)
-                      </a>
-                    </td>
-                  </tr>
-                  <tr>
-                    <th className="text-left align-top py-2 pr-3 font-semibold">
-                      Enterocystoplasty
-                    </th>
-                    <td className="py-2">
-                      <a
-                        href="https://www.baus.org.uk/_userfiles/pages/files/patients/leaflets/Enterocystoplasty.pdf"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="underline hover:opacity-80"
-                      >
-                        Enterocystoplasty (bladder enlargement surgery) — BAUS
-                        (PDF)
-                      </a>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+            <div className="space-y-5 text-[18px] md:text-[19px]">
+              <div className="space-y-1">
+                <p className="font-semibold whitespace-nowrap">Urinary incontinence</p>
+                <a
+                  href="https://www.baus.org.uk/patients/conditions/5/incontinence_of_urine"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block underline underline-offset-2 break-words hover:opacity-80"
+                >
+                  baus.org.uk/patients/conditions/5/incontinence_of_urine
+                </a>
+              </div>
+              <div className="space-y-1">
+                <p className="font-semibold whitespace-nowrap">Bladder training</p>
+                <a
+                  href="https://www.baus.org.uk/_userfiles/pages/files/Patients/Leaflets/Bladder%20training.pdf"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block underline underline-offset-2 break-words hover:opacity-80"
+                >
+                  Bladder training (PDF) — BAUS
+                </a>
+              </div>
+              <div className="space-y-1">
+                <p className="font-semibold whitespace-nowrap">Input/output chart</p>
+                <a
+                  href="https://www.baus.org.uk/_userfiles/pages/files/patients/leaflets/Input%20output%20chart.pdf"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block underline underline-offset-2 break-words hover:opacity-80"
+                >
+                  Input/output chart (PDF) — BAUS
+                </a>
+              </div>
+              <div className="space-y-1">
+                <p className="font-semibold whitespace-nowrap">Pelvic floor exercises (men)</p>
+                <a
+                  href="https://www.baus.org.uk/_userfiles/pages/files/Patients/Leaflets/Pelvic%20floor%20XS%20male.pdf"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block underline underline-offset-2 break-words hover:opacity-80"
+                >
+                  Pelvic floor exercises — BAUS (PDF)
+                </a>
+              </div>
+              <div className="space-y-1">
+                <p className="font-semibold whitespace-nowrap">Pelvic floor exercises (women)</p>
+                <a
+                  href="https://www.baus.org.uk/_userfiles/pages/files/Patients/Leaflets/Pelvic%20floor%20XS%20female.pdf"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block underline underline-offset-2 break-words hover:opacity-80"
+                >
+                  Pelvic floor exercises — BAUS (PDF)
+                </a>
+              </div>
+              <div className="space-y-1">
+                <p className="font-semibold whitespace-nowrap">OAB treatment options</p>
+                <a
+                  href="https://www.baus.org.uk/_userfiles/pages/files/Patients/Leaflets/OAB%20options.pdf"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block underline underline-offset-2 break-words hover:opacity-80"
+                >
+                  Treatment options for overactive bladder — BAUS (PDF)
+                </a>
+              </div>
+              <div className="space-y-1">
+                <p className="font-semibold whitespace-nowrap">What are botox injections?</p>
+                <a
+                  href="https://www.baus.org.uk/_userfiles/pages/files/Patients/Leaflets/Botox.pdf"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block underline underline-offset-2 break-words hover:opacity-80"
+                >
+                  Botox injections — BAUS (PDF)
+                </a>
+              </div>
+              <div className="space-y-1">
+                <p className="font-semibold whitespace-nowrap">
+                  What is Posterior Tibial Nerve Stimulation (PTNS)
+                </p>
+                <a
+                  href="https://bsug.org.uk/budcms/includes/kcfinder/upload/files/info-leaflets/PTNS%20BSUG%20July%202017.pdf"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block underline underline-offset-2 break-words hover:opacity-80"
+                >
+                  Posterior Tibial Nerve Stimulation — BSUG (PDF)
+                </a>
+              </div>
+              <div className="space-y-1">
+                <p className="font-semibold whitespace-nowrap">What is sacral nerve stimulation (SNS)</p>
+                <a
+                  href="https://www.baus.org.uk/_userfiles/pages/files/Patients/Leaflets/Sacral%20neuromodulation.pdf"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block underline underline-offset-2 break-words hover:opacity-80"
+                >
+                  Sacral nerve stimulation — BAUS (PDF)
+                </a>
+              </div>
+              <div className="space-y-1">
+                <p className="font-semibold whitespace-nowrap">
+                  Surgery for overactive bladder - enterocystoplasty
+                </p>
+                <a
+                  href="https://www.baus.org.uk/_userfiles/pages/files/patients/leaflets/Enterocystoplasty.pdf"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block underline underline-offset-2 break-words hover:opacity-80"
+                >
+                  Enterocystoplasty (bladder enlargement surgery) — BAUS (PDF)
+                </a>
+              </div>
             </div>
           </div>
         </div>
