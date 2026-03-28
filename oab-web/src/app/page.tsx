@@ -58,7 +58,7 @@ function HeroTop() {
             <div className="text-xs md:text-sm tracking-[0.2em] uppercase text-[#faf5d9]/85">
               Patient‑centred&nbsp;|&nbsp;Evidence‑based
             </div>
-            <h1 className="hero-metal-text mt-6 text-5xl sm:text-6xl md:text-7xl lg:text-[5.6rem] leading-[1.06] drop-shadow-[0_4px_22px_rgba(0,0,0,0.45)]">
+            <h1 className="hero-metal-text mt-6 text-[2.84rem] sm:text-6xl md:text-7xl lg:text-[5.6rem] leading-[1.06] drop-shadow-[0_4px_22px_rgba(0,0,0,0.45)]">
               Empowering Bladder Health
             </h1>
             <p className="mt-6 mx-auto text-sm sm:text-base md:text-lg lg:text-xl md:whitespace-nowrap font-bold text-[#faf5d9]/78 drop-shadow-[0_2px_8px_rgba(0,0,0,0.3)]">
@@ -485,13 +485,13 @@ function ChatPane() {
                           p: (props) => (
                             <p
                               {...(props as React.HTMLAttributes<HTMLParagraphElement>)}
-                              className="whitespace-pre-wrap leading-relaxed"
+                              className="whitespace-pre-wrap text-[13.33px] md:text-sm leading-relaxed"
                             />
                           ),
                           li: (props) => (
                             <li
                               {...(props as React.LiHTMLAttributes<HTMLLIElement>)}
-                              className="whitespace-pre-wrap leading-relaxed"
+                              className="whitespace-pre-wrap text-[13.33px] md:text-sm leading-relaxed"
                             />
                           ),
                         }}
@@ -512,7 +512,7 @@ function ChatPane() {
                   <div className="text-[10px] uppercase tracking-wide opacity-60 mb-1">
                     You
                   </div>
-                  <div className="whitespace-pre-wrap leading-relaxed">
+                  <div className="whitespace-pre-wrap text-[13.33px] md:text-base leading-relaxed">
                     {m.content}
                   </div>
                 </div>
