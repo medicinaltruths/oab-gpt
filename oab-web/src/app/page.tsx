@@ -58,7 +58,7 @@ function HeroTop() {
             <div className="text-xs md:text-sm tracking-[0.2em] uppercase text-[#faf5d9]/85">
               Patient‑centred&nbsp;|&nbsp;Evidence‑based
             </div>
-            <h1 className="hero-metal-text mt-6 text-[2.65rem] sm:text-6xl md:text-7xl lg:text-[5.6rem] leading-[1.06] drop-shadow-[0_4px_22px_rgba(0,0,0,0.45)]">
+            <h1 className="hero-metal-text mx-auto mt-6 max-w-[9ch] text-center text-3xl sm:max-w-none sm:text-6xl md:text-7xl lg:text-[5.6rem] leading-[1.06] drop-shadow-[0_4px_22px_rgba(0,0,0,0.45)]">
               Empowering Bladder Health
             </h1>
             <p className="mt-6 mx-auto text-sm sm:text-base md:text-lg lg:text-xl md:whitespace-nowrap font-bold text-[#faf5d9]/78 drop-shadow-[0_2px_8px_rgba(0,0,0,0.3)]">
