@@ -6,6 +6,7 @@ import {
   onAuthStateChanged,
   type User,
 } from "firebase/auth";
+import { getDownloadURL, getStorage, ref } from "firebase/storage";
 
 // These must be present in .env.local as NEXT_PUBLIC_FIREBASE_*
 const firebaseConfig = {
@@ -40,4 +41,20 @@ export async function ensureAnonUser(): Promise<string> {
   // Otherwise sign in anonymously
   const cred = await signInAnonymously(a);
   return cred.user.uid;
+}
+
+/** Ensure an anonymous session exists, then return a fresh ID token. */
+export async function ensureAnonIdToken(forceRefresh = false): Promise<string> {
+  await ensureAnonUser();
+  const a = getAuth(getClientApp());
+  if (!a.currentUser) {
+    throw new Error("Firebase user unavailable after anonymous sign-in");
+  }
+  return a.currentUser.getIdToken(forceRefresh);
+}
+
+/** Resolve a Firebase Storage path to a download URL for the signed-in user. */
+export async function getStorageDownloadUrl(storagePath: string): Promise<string> {
+  const storage = getStorage(getClientApp());
+  return getDownloadURL(ref(storage, storagePath));
 }

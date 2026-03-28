@@ -1,26 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { ensureAnonUser } from "@/lib/firebase";
 import ReactMarkdown from "react-markdown";
-
-/* ----------------------------- */
-/* Global typing for Dev helpers */
-/* ----------------------------- */
-declare global {
-  interface Window {
-    __oab?: { ensureAnonUser: typeof ensureAnonUser };
-  }
-}
-
-function DevExpose() {
-  // Only attach helpers in development and only on the client
-  useEffect(() => {
-    if (process.env.NODE_ENV === "development") {
-      window.__oab = { ensureAnonUser };
-    }
-  }, []);
-  return null;
-}
 
 const THREAD_KEY = "oab_thread_id";
 const LAST_ACTIVITY_KEY = "oab_last_activity";
@@ -230,7 +210,6 @@ function TypingBubble() {
 
 function ChatPane() {
   const [threadId, setThreadId] = useState<string | null>(null);
-  const [uid, setUid] = useState<string | null>(null);
 
   // Helper to clean up duplicate raw URLs when markdown link is present
   function normalizeAssistantText(text: string): string {
@@ -269,10 +248,6 @@ function ChatPane() {
       }
       setThreadId(null);
     }
-  }, []);
-
-  useEffect(() => {
-    ensureAnonUser().then(setUid).catch(console.error);
   }, []);
 
   useEffect(() => {
@@ -334,188 +309,94 @@ function ChatPane() {
     }
   }, [messages]);
 
-  async function generateReportFlow() {
-    if (!uid) {
-      setMessages((m) => [
-        ...m,
-        {
-          role: "assistant",
-          content:
-            "I couldn't confirm your session. Please try again in a moment.",
-        },
-      ]);
-      return;
-    }
-    if (!threadId) {
-      setMessages((m) => [
-        ...m,
-        {
-          role: "assistant",
-          content:
-            "I couldn't find this conversation thread. Please try sending a quick message and try again.",
-        },
-      ]);
-      return;
-    }
-    setBusy(true);
-    try {
-      const res = await fetch("/api/create-report", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          uid,
-          threadId,
-          sessionId: `sess-${Date.now()}`,
-        }),
-      });
-      const out: {
-        downloadUrl?: string;
-        storagePath?: string;
-      } = await res.json();
-      if (out?.downloadUrl) {
-        setMessages((m) => [
-          ...m,
-          {
-            role: "assistant",
-            content: `Your report is ready. It’ll be available for a limited time:\n${out.downloadUrl}`,
-          },
-        ]);
-      } else if (out?.storagePath) {
-        setMessages((m) => [
-          ...m,
-          {
-            role: "assistant",
-            content: `Your report is ready and stored securely. Link will be available shortly:\n${out.storagePath}`,
-          },
-        ]);
-      } else {
-        setMessages((m) => [
-          ...m,
-          { role: "assistant", content: "Report created, but I couldn't get a link back." },
-        ]);
-      }
-    } catch (e) {
-      console.error(e);
-      setMessages((m) => [
-        ...m,
-        { role: "assistant", content: "Sorry — I couldn't generate the PDF just now." },
-      ]);
-    } finally {
-      setBusy(false);
-      if (typeof window !== "undefined") {
-        localStorage.setItem(LAST_ACTIVITY_KEY, String(Date.now()));
-      }
-      taRef.current?.focus({ preventScroll: true } as FocusOptions);
-    }
-  }
-
   async function sendMessage(e: React.FormEvent) {
-  e.preventDefault();
-  if (!input.trim()) return;
+    e.preventDefault();
+    if (!input.trim()) return;
 
-  const prompt = input.trim();
-  if (typeof window !== "undefined") {
-    localStorage.setItem(LAST_ACTIVITY_KEY, String(Date.now()));
-  }
+    const prompt = input.trim();
+    if (typeof window !== "undefined") {
+      localStorage.setItem(LAST_ACTIVITY_KEY, String(Date.now()));
+    }
 
-  setMessages((m) => [...m, { role: "user", content: prompt }]);
+    setMessages((m) => [...m, { role: "user", content: prompt }]);
 
-  // If the last assistant message asked to generate a PDF, and the user replies with consent or "nothing else", trigger report
-  const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant");
-  const assistantAskedToGenerate = !!lastAssistant && /generate.*pdf/i.test(lastAssistant.content);
-  const userConsents =
-    /\b(yes|yeah|yep|ok|okay|please|go ahead|proceed|no|nope|nothing|that's all|thats all|no thanks|no thank you|all good)\b/i.test(
-      prompt
-    );
-
-  if (assistantAskedToGenerate && userConsents) {
     setInput("");
+    // Reset textarea height back to one line after sending
     if (taRef.current) {
       taRef.current.style.height = "auto";
       taRef.current.style.removeProperty("height");
     }
+    // Keep focus in the input without scrolling the page
     taRef.current?.focus({ preventScroll: true } as FocusOptions);
-    await generateReportFlow();
-    return;
-  }
+    setBusy(true);
 
-  setInput("");
-  // Reset textarea height back to one line after sending
-  if (taRef.current) {
-    taRef.current.style.height = "auto";
-    taRef.current.style.removeProperty("height");
-  }
-  // Keep focus in the input without scrolling the page
-  taRef.current?.focus({ preventScroll: true } as FocusOptions);
-  setBusy(true);
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt, threadId }),
+      });
 
-  try {
-    const res = await fetch("/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt, threadId }),
-    });
+      const data: { threadId?: string; reply?: string; reason?: string } = await res.json();
 
-    const data: { threadId?: string; reply?: string; reason?: string } = await res.json();
-
-    if (data.threadId && data.threadId !== threadId) {
-      setThreadId(data.threadId);
-      if (typeof window !== "undefined") {
-        localStorage.setItem(THREAD_KEY, data.threadId);
-        localStorage.setItem(LAST_ACTIVITY_KEY, String(Date.now()));
+      if (data.threadId && data.threadId !== threadId) {
+        setThreadId(data.threadId);
+        if (typeof window !== "undefined") {
+          localStorage.setItem(THREAD_KEY, data.threadId);
+          localStorage.setItem(LAST_ACTIVITY_KEY, String(Date.now()));
+        }
       }
-    }
 
-    if (data?.reason === "run_active") {
-      // Keep typing bubble on and retry soon (wrap async inside a sync callback)
-      setTimeout(() => {
-        void (async () => {
-          try {
-            const retry = await fetch("/api/chat", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ prompt, threadId }),
-            });
+      if (data?.reason === "run_active") {
+        // Keep typing bubble on and retry soon (wrap async inside a sync callback)
+        setTimeout(() => {
+          void (async () => {
+            try {
+              const retry = await fetch("/api/chat", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ prompt, threadId }),
+              });
 
-            const retryData = (await retry.json()) as {
-              threadId?: string;
-              reply?: string;
-            };
+              const retryData = (await retry.json()) as {
+                threadId?: string;
+                reply?: string;
+              };
 
-            if (retryData.threadId && retryData.threadId !== threadId) {
-              setThreadId(retryData.threadId);
-              if (typeof window !== "undefined") {
-                localStorage.setItem(THREAD_KEY, retryData.threadId);
-                localStorage.setItem(LAST_ACTIVITY_KEY, String(Date.now()));
+              if (retryData.threadId && retryData.threadId !== threadId) {
+                setThreadId(retryData.threadId);
+                if (typeof window !== "undefined") {
+                  localStorage.setItem(THREAD_KEY, retryData.threadId);
+                  localStorage.setItem(LAST_ACTIVITY_KEY, String(Date.now()));
+                }
               }
-            }
 
-            if (retryData.reply) {
-              setMessages((prev) => [
-                ...prev,
-                { role: "assistant", content: retryData.reply as string },
-              ]);
+              if (retryData.reply) {
+                setMessages((prev) => [
+                  ...prev,
+                  { role: "assistant", content: retryData.reply as string },
+                ]);
+              }
+            } catch (err) {
+              console.error(err);
+            } finally {
+              setBusy(false);
             }
-          } catch (err) {
-            console.error(err);
-          } finally {
-            setBusy(false);
-          }
-        })();
-      }, 1500);
+          })();
+        }, 1500);
 
-      return;
+        return;
+      }
+
+      setMessages((m) => [
+        ...m,
+        { role: "assistant", content: data.reply || "…" },
+      ]);
+      taRef.current?.focus({ preventScroll: true } as FocusOptions);
+    } finally {
+      setBusy(false);
     }
-
-    setMessages((m) => [
-      ...m,
-      { role: "assistant", content: data.reply || "…" },
-    ]);
-    taRef.current?.focus({ preventScroll: true } as FocusOptions);
-  } finally {
-    setBusy(false);
   }
-}
 
   function resetConversation() {
     setThreadId(null);
@@ -1234,7 +1115,6 @@ function InfoTabs() {
 export default function Page() {
   return (
     <main className="bg-black">
-      <DevExpose />
       <HeroTop />
       <IntroFelicitySection />
       <ChatSection />

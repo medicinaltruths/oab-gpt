@@ -37,6 +37,13 @@ interface ThreadMessage {
   content?: Array<TextContent | AnyContent>;
 }
 
+interface PdfFunctionResult {
+  ok?: boolean;
+  downloadUrl?: string;
+  storagePath?: string;
+  error?: unknown;
+}
+
 /* ----------------------------------------- */
 /* Module-level set to de-dupe tool call IDs */
 /* ----------------------------------------- */
@@ -136,6 +143,24 @@ function extractUrls(text: string): string[] {
     urls.push(m[0]);
   }
   return urls;
+}
+
+function parsePdfFunctionResult(raw: string): PdfFunctionResult | null {
+  try {
+    const tmp = raw ? (JSON.parse(raw) as unknown) : null;
+    if (!tmp || typeof tmp !== "object") return null;
+    const data = tmp as Partial<PdfFunctionResult>;
+    return {
+      ok: typeof data.ok === "boolean" ? data.ok : undefined,
+      downloadUrl:
+        typeof data.downloadUrl === "string" ? data.downloadUrl : undefined,
+      storagePath:
+        typeof data.storagePath === "string" ? data.storagePath : undefined,
+      error: data.error,
+    };
+  } catch {
+    return null;
+  }
 }
 
 async function findLatestReportUrlFromThread(
@@ -367,28 +392,28 @@ async function handleRequiredActionNow(
       console.log("[chat] CF create-report status:", resp.status);
       console.log("[chat] CF create-report body:", raw);
 
-      interface PdfResp { ok?: boolean; downloadUrl?: string; error?: unknown }
-      let data: PdfResp | null = null;
-      try {
-        const tmp = raw ? (JSON.parse(raw) as unknown) : null;
-        if (tmp && typeof tmp === "object") {
-          const d = tmp as Partial<PdfResp>;
-          data = {
-            ok: typeof d.ok === "boolean" ? d.ok : undefined,
-            downloadUrl: typeof d.downloadUrl === "string" ? d.downloadUrl : undefined,
-            error: d.error,
-          };
-        }
-      } catch {
-        /* ignore non-JSON error bodies */
-      }
+      const data = parsePdfFunctionResult(raw);
 
-      if (resp.ok && data?.ok && typeof data.downloadUrl === "string" && data.downloadUrl.length > 0) {
-        outputText = data.downloadUrl; // send the actual signed URL back to the Assistant
+      if (
+        resp.ok &&
+        data?.ok &&
+        typeof data.downloadUrl === "string" &&
+        data.downloadUrl.length > 0
+      ) {
+        outputText = data.downloadUrl;
+      } else if (
+        resp.ok &&
+        data?.ok &&
+        typeof data.storagePath === "string" &&
+        data.storagePath.length > 0
+      ) {
+        outputText = `STORAGE_PATH:${data.storagePath}`;
       } else if (data && "error" in data && typeof data.error !== "undefined") {
         outputText = `ERROR: ${String(data.error)}`;
       } else {
-        outputText = `ERROR: PDF function responded without a URL (status ${resp.status}).`;
+        outputText =
+          `ERROR: PDF function responded without a URL or storage path ` +
+          `(status ${resp.status}).`;
       }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -430,7 +455,7 @@ export async function POST(req: Request) {
       newSession?: boolean;
     };
 
-    let lastToolResult: { downloadUrl?: string } | null = null;
+    let lastToolResult: PdfFunctionResult | null = null;
 
     const prompt = String(body?.prompt ?? "");
     let threadId = String(body?.threadId ?? "");
@@ -612,6 +637,18 @@ export async function POST(req: Request) {
             { status: 200 }
           );
         }
+        if (lastToolResult?.storagePath) {
+          return new Response(
+            JSON.stringify({
+              reply:
+                "The PDF was written to Firebase Storage, but I couldn't resolve " +
+                "a download URL in time.\n\n" +
+                `Storage path: ${lastToolResult.storagePath}`,
+              threadId,
+            }),
+            { status: 200 }
+          );
+        }
         // Tell the client to retry; avoid 60s platform timeout
         return new Response(
           JSON.stringify({ reason: "run_active", threadId, runId }),
@@ -687,29 +724,29 @@ export async function POST(req: Request) {
               console.log("[chat] CF create-report status:", resp.status);
               console.log("[chat] CF create-report body:", raw);
 
-              interface PdfResp { ok?: boolean; downloadUrl?: string; error?: unknown }
-              let data: PdfResp | null = null;
-              try {
-                const tmp = raw ? (JSON.parse(raw) as unknown) : null;
-                if (tmp && typeof tmp === "object") {
-                  const d = tmp as Partial<PdfResp>;
-                  data = {
-                    ok: typeof d.ok === "boolean" ? d.ok : undefined,
-                    downloadUrl: typeof d.downloadUrl === "string" ? d.downloadUrl : undefined,
-                    error: d.error,
-                  };
-                }
-              } catch {
-                /* ignore */
-              }
+              const data = parsePdfFunctionResult(raw);
               lastToolResult = data || lastToolResult;
 
-              if (resp.ok && data?.ok && typeof data.downloadUrl === "string" && data.downloadUrl.length > 0) {
+              if (
+                resp.ok &&
+                data?.ok &&
+                typeof data.downloadUrl === "string" &&
+                data.downloadUrl.length > 0
+              ) {
                 outputText = data.downloadUrl;
+              } else if (
+                resp.ok &&
+                data?.ok &&
+                typeof data.storagePath === "string" &&
+                data.storagePath.length > 0
+              ) {
+                outputText = `STORAGE_PATH:${data.storagePath}`;
               } else if (data && "error" in data && typeof data.error !== "undefined") {
                 outputText = `ERROR: ${String(data.error)}`;
               } else {
-                outputText = `ERROR: PDF function responded without a URL (status ${resp.status}).`;
+                outputText =
+                  `ERROR: PDF function responded without a URL or storage path ` +
+                  `(status ${resp.status}).`;
               }
             } catch (e: unknown) {
               const msg = e instanceof Error ? e.message : String(e);
@@ -823,6 +860,12 @@ export async function POST(req: Request) {
         `[Download your report here.](${url})\n\n` +
         `This link will be available for about 48 hours.\n` +
         `Is there anything else you'd like me to assist you with?\n\n`;
+    }
+    if (!finalReply && lastToolResult?.storagePath) {
+      finalReply =
+        "The PDF was written to Firebase Storage, but I couldn't resolve " +
+        "a download URL from the endpoint response.\n\n" +
+        `Storage path: ${lastToolResult.storagePath}`;
     }
     if (!finalReply) {
       finalReply =
