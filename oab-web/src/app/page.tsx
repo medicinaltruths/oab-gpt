@@ -52,7 +52,7 @@ function HeroTop() {
       <div className="relative z-10 max-w-7xl mx-auto px-8 md:px-16 min-h-[88svh] py-20 md:py-24 lg:py-28 flex items-center">
         <div className="w-full max-w-5xl mx-auto text-center px-6 md:px-10 lg:px-14">
           <div
-            className="hero-overlay-panel mx-auto w-full max-w-4xl rounded-3xl border border-white/20 bg-transparent backdrop-blur-none sm:bg-[#020a1f]/82 sm:backdrop-blur-xl p-7 md:p-10"
+            className="hero-overlay-panel mx-auto w-full max-w-4xl rounded-3xl border border-white/20 bg-[#020a1f]/82 backdrop-blur-xl p-7 md:p-10"
             style={{ fontFamily: "var(--font-display)" }}
           >
             <div className="text-xs md:text-sm tracking-[0.2em] uppercase text-[#faf5d9]/85">
