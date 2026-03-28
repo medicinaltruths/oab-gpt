@@ -198,6 +198,12 @@ body {
       0 14px 24px rgba(0, 0, 0, 0.26);
   }
 
+  .hero-metal-text-mobile {
+    text-shadow:
+      0 1px 0 rgba(255, 255, 255, 0.2),
+      0 3px 8px rgba(0, 0, 0, 0.32);
+  }
+
   .mid-reveal {
     opacity: 0;
     transform: translateY(26px);
@@ -461,5 +467,11 @@ body {
 
   .hero-overlay-panel::after {
     content: none;
+  }
+
+  .hero-metal-text-mobile {
+    line-break: auto;
+    overflow-wrap: normal;
+    word-break: normal;
   }
 }
