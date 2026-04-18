@@ -7,7 +7,7 @@ const admin = require("firebase-admin");
 const corsMW = require("cors");
 const { PDFDocument, rgb, StandardFonts } = require("pdf-lib");
 
-const BUILD_TAG = "generateSummaryPdf v3 (2025-09-03)";
+const BUILD_TAG = "generateSummaryPdf v4 (2026-04-14)";
 
 // ===== Configure =====
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "*"; // e.g. "https://oab.yourdomain.com"
@@ -363,27 +363,30 @@ exports.generateSummaryPdf = onRequest(async (req, res) => {
         resumable: false,
       });
 
+      const ttlMsFromBody = (typeof body.signedUrlTTLms === "number" && body.signedUrlTTLms > 0)
+        ? Math.min(body.signedUrlTTLms, 7 * 24 * 60 * 60 * 1000) // cap at 7 days
+        : SIGNED_URL_FALLBACK_MINUTES * 60 * 1000; // default 48h
+      const expiresAt = now + ttlMsFromBody;
+      const signed = await file.getSignedUrl({
+        action: "read",
+        expires: expiresAt,
+      });
+      const url = signed && signed[0] ? signed[0] : null;
+
       // Response strategy:
-      // - If authed: return storage path (frontend should use Firebase Storage SDK + rules)
-      // - If not authed: return short-lived signed URL for convenience/testing
+      // - Always return a signed URL so the chat server can hand back a usable link
+      // - For authenticated calls also return storagePath for owner-scoped client access
       if (uid) {
         return res.status(200).json({
           ok: true,
           mode: "storage",
           storagePath: path,
+          downloadUrl: url,
+          expiresAt: expiresAt,
           build: BUILD_TAG,
-          message: "Authenticated: use Firebase Storage getDownloadURL() to fetch.",
+          message: "Authenticated: stored in Firebase Storage and returning a short-lived download URL.",
         });
       } else {
-        const ttlMsFromBody = (typeof body.signedUrlTTLms === "number" && body.signedUrlTTLms > 0)
-          ? Math.min(body.signedUrlTTLms, 7 * 24 * 60 * 60 * 1000) // cap at 7 days
-          : SIGNED_URL_FALLBACK_MINUTES * 60 * 1000; // default 48h
-        const expiresAt = now + ttlMsFromBody;
-        const signed = await file.getSignedUrl({
-          action: "read",
-          expires: expiresAt,
-        });
-        const url = signed && signed[0] ? signed[0] : null;
         return res.status(200).json({
           ok: true,
           mode: "signed-url",

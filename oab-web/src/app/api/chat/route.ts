@@ -1,89 +1,43 @@
-// import { url } from "inspector";
 import OpenAI from "openai";
 
-/* ------------------------------------------------------------------------- */
-/* Minimal types: enough to satisfy TS/ESLint without importing SDK internals */
-/* ------------------------------------------------------------------------- */
-type RunStatus =
-  | "queued"
-  | "in_progress"
-  | "requires_action"
-  | "completed"
-  | "failed"
-  | "cancelled"
-  | "expired";
-
-interface ToolFunctionCall {
-  id: string;
-  type: "function";
-  function: { name: string; arguments?: string };
-}
-
-interface RunShape {
-  id?: string;
-  thread_id?: string;
-  status: RunStatus;
-  required_action?: {
-    submit_tool_outputs?: {
-      tool_calls: ToolFunctionCall[];
-    };
-  };
-}
-
-type TextContent = { type: "text"; text: { value: string } };
-type AnyContent = { type: string; [k: string]: unknown };
-interface ThreadMessage {
-  role?: string;
-  content?: Array<TextContent | AnyContent>;
-}
-
-interface PdfFunctionResult {
+type PdfFunctionResult = {
   ok?: boolean;
   downloadUrl?: string;
   storagePath?: string;
   error?: unknown;
-}
+  expiresAt?: number;
+};
 
-/* ----------------------------------------- */
-/* Module-level set to de-dupe tool call IDs */
-/* ----------------------------------------- */
-const handledToolCallIds = new Set<string>();
+type ResponseLike = {
+  id?: string;
+  output_text?: string;
+  previous_response_id?: string | null;
+  error?: { message?: string } | null;
+  output?: Array<Record<string, unknown>>;
+};
 
-/* ------------------------------------------------------------------------- */
-/* Cloud Function endpoint for PDF generation (assistant-led URL delivery)   */
-/* ------------------------------------------------------------------------- */
+type ResponseFunctionToolCallLike = {
+  type: "function_call";
+  call_id: string;
+  name: string;
+  arguments: string;
+};
+
 const PDF_FUNCTION_URL = process.env.PDF_FUNCTION_URL || "";
-
-/* ----------------------- */
-/* Simple intent heuristics */
-/* ----------------------- */
-function isNewReportRequest(text: string): boolean {
-  const t = (text || "").toLowerCase();
-  return (
-    /(^|\b)(new|another|fresh)\s+(pdf|report)\b/.test(t) ||
-    ((/generate|make|create/.test(t)) && /\b(report|pdf)\b/.test(t))
-  );
-}
-function isSendLinkRequest(text: string): boolean {
-  const t = (text || "").toLowerCase();
-  return (
-    (/\b(send|give|provide|share|show)\b.*\b(link|report|pdf)\b/.test(t)) ||
-    (/\bdownload\b.*\b(report|pdf)\b/.test(t)) ||
-    (/\blink\b/.test(t) && /\b(report|pdf)\b/.test(t))
-  );
-}
-
-console.log("[chat-route] loaded v9 (typed, eslint-clean)");
+const RESPONSE_PROMPT_ID =
+  process.env.OPENAI_RESPONSE_PROMPT_ID ||
+  "pmpt_69b6c6d563b48190abc1ff491758a65603e2489b1acb8ca8";
+const RESPONSE_PROMPT_VERSION =
+  process.env.OPENAI_RESPONSE_PROMPT_VERSION || "8";
+const RESPONSE_VECTOR_STORE_ID =
+  process.env.OPENAI_VECTOR_STORE_ID || "vs_69b72bdacc608191bca56976c10d9c64";
 
 export const runtime = "nodejs";
-export const dynamic = "force-dynamic"; // always run on server, no caching
-export const maxDuration = 60; // seconds (adjust to your Vercel plan)
+export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
-const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/* ------------------------------------ */
-/* Per-request timeout + lightweight retry */
-/* ------------------------------------ */
 function fetchWithTimeout(
   input: RequestInfo | URL,
   init: RequestInit & { timeoutMs?: number } = {}
@@ -111,45 +65,46 @@ async function fetchRetry(
         return res;
       }
     } catch (e) {
-    lastErr = e;
+      lastErr = e;
     }
     await wait(400 * Math.pow(2, i));
   }
   throw lastErr ?? new Error("fetchRetry failed");
 }
 
-/* -------------------------- */
-/* Message/text helper guards */
-/* -------------------------- */
-function extractTextFromMessage(msg: unknown): string {
-  const m = msg as ThreadMessage | undefined;
-  if (!m || !Array.isArray(m.content)) return "";
-  const parts: string[] = [];
-  for (const part of m.content) {
-    const p = part as Partial<TextContent>;
-    if (p?.type === "text" && typeof p?.text?.value === "string") {
-      parts.push(p.text.value);
-    }
-  }
-  return parts.join("\n").trim();
+function isNewReportRequest(text: string): boolean {
+  const t = (text || "").toLowerCase();
+  return (
+    /(^|\b)(new|another|fresh)\s+(pdf|report)\b/.test(t) ||
+    ((/generate|make|create/.test(t)) && /\b(report|pdf)\b/.test(t))
+  );
+}
+
+function isSendLinkRequest(text: string): boolean {
+  const t = (text || "").toLowerCase();
+  return (
+    /\b(send|give|provide|share|show)\b.*\b(link|report|pdf)\b/.test(t) ||
+    /\bdownload\b.*\b(report|pdf)\b/.test(t) ||
+    (/\blink\b/.test(t) && /\b(report|pdf)\b/.test(t))
+  );
 }
 
 function extractUrls(text: string): string[] {
   if (!text) return [];
   const urls: string[] = [];
   const re = /\bhttps?:\/\/[^\s)]+/gi;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) {
-    urls.push(m[0]);
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(text)) !== null) {
+    urls.push(match[0]);
   }
   return urls;
 }
 
 function parsePdfFunctionResult(raw: string): PdfFunctionResult | null {
   try {
-    const tmp = raw ? (JSON.parse(raw) as unknown) : null;
-    if (!tmp || typeof tmp !== "object") return null;
-    const data = tmp as Partial<PdfFunctionResult>;
+    const parsed = raw ? (JSON.parse(raw) as unknown) : null;
+    if (!parsed || typeof parsed !== "object") return null;
+    const data = parsed as Partial<PdfFunctionResult>;
     return {
       ok: typeof data.ok === "boolean" ? data.ok : undefined,
       downloadUrl:
@@ -157,317 +112,328 @@ function parsePdfFunctionResult(raw: string): PdfFunctionResult | null {
       storagePath:
         typeof data.storagePath === "string" ? data.storagePath : undefined,
       error: data.error,
+      expiresAt:
+        typeof data.expiresAt === "number" ? data.expiresAt : undefined,
     };
   } catch {
     return null;
   }
 }
 
-async function findLatestReportUrlFromThread(
-  client: OpenAI,
-  threadId: string
-): Promise<string | ""> {
-  try {
-    const list = await client.beta.threads.messages.list(threadId, {
-      order: "desc",
-      limit: 30,
-    });
-    for (const m of (list.data as unknown as ThreadMessage[])) {
-      if (!Array.isArray(m?.content)) continue;
-      for (const c of (m.content as Array<TextContent | AnyContent>)) {
-        const t = c as TextContent;
-        if (t?.type === "text" && t?.text?.value) {
-          const text = String(t.text.value);
-          if (/download|report/i.test(text)) {
-            const urls = extractUrls(text);
-            const winner = urls.find(
-              (u) =>
-                /https:\/\/storage\.googleapis\.com\//i.test(u) ||
-                /firebasestorage\.app/i.test(u)
-            );
-            if (winner) return winner;
-          }
-        }
+function extractTextFromResponse(response: ResponseLike | null): string {
+  if (!response) return "";
+  if (typeof response.output_text === "string" && response.output_text.trim()) {
+    return response.output_text.trim();
+  }
+  const parts: string[] = [];
+  for (const item of response.output ?? []) {
+    if (item?.type !== "message") continue;
+    const content = Array.isArray(item.content)
+      ? (item.content as Array<Record<string, unknown>>)
+      : [];
+    for (const part of content) {
+      if (part?.type === "output_text" && typeof part.text === "string") {
+        parts.push(part.text);
       }
     }
-  } catch {
-    /* no-op */
+  }
+  return parts.join("\n").trim();
+}
+
+function getFunctionCalls(response: ResponseLike | null): ResponseFunctionToolCallLike[] {
+  const calls: ResponseFunctionToolCallLike[] = [];
+  for (const item of response?.output ?? []) {
+    if (
+      item?.type === "function_call" &&
+      typeof item.call_id === "string" &&
+      typeof item.name === "string" &&
+      typeof item.arguments === "string"
+    ) {
+      calls.push(item as unknown as ResponseFunctionToolCallLike);
+    }
+  }
+  return calls;
+}
+
+async function findLatestReportUrlFromResponseChain(
+  client: OpenAI,
+  responseId: string
+): Promise<string> {
+  let currentId = responseId;
+  for (let i = 0; i < 30 && currentId; i++) {
+    try {
+      const response = (await client.responses.retrieve(
+        currentId
+      )) as unknown as ResponseLike;
+      const text = extractTextFromResponse(response);
+      const urls = extractUrls(text);
+      const winner = urls.find(
+        (url) =>
+          /https:\/\/storage\.googleapis\.com\//i.test(url) ||
+          /firebasestorage\.app/i.test(url)
+      );
+      if (winner) return winner;
+      currentId =
+        typeof response.previous_response_id === "string"
+          ? response.previous_response_id
+          : "";
+    } catch {
+      return "";
+    }
   }
   return "";
 }
 
-/* ----------------------------- */
-/* HTTP helpers (typed responses) */
-/* ----------------------------- */
-async function retrieveRunHTTP(
-  threadId: string,
-  runId: string
-): Promise<RunShape> {
-  const res = await fetchRetry(
-    `https://api.openai.com/v1/threads/${threadId}/runs/${runId}`,
+function buildResponsesTools() {
+  return [
     {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-        "Content-Type": "application/json",
-        "OpenAI-Beta": "assistants=v2",
-      },
-      cache: "no-store",
-      timeoutMs: 20_000,
-    }
-  );
-  if (!res.ok) {
-    const errText = await res.text().catch(() => "");
-    throw new Error(`HTTP retrieve failed ${res.status}: ${errText}`);
-  }
-  return (await res.json()) as RunShape;
-}
-
-async function listRunsLatestHTTP(threadId: string): Promise<string> {
-  const url = new URL(`https://api.openai.com/v1/threads/${threadId}/runs`);
-  url.searchParams.set("limit", "1");
-  url.searchParams.set("order", "desc");
-  const res = await fetchRetry(url.toString(), {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-      "Content-Type": "application/json",
-      "OpenAI-Beta": "assistants=v2",
-    },
-    cache: "no-store",
-    timeoutMs: 20_000,
-  });
-  if (!res.ok) {
-    const err = await res.text().catch(() => "");
-    throw new Error(`HTTP list failed ${res.status}: ${err}`);
-  }
-  const data = (await res.json()) as { data?: Array<{ id?: string }> };
-  return data?.data?.[0]?.id || "";
-}
-
-async function listRunsLatestHTTPWithStatus(
-  threadId: string
-): Promise<{ id: string; status: RunStatus } | null> {
-  const url = new URL(`https://api.openai.com/v1/threads/${threadId}/runs`);
-  url.searchParams.set("limit", "1");
-  url.searchParams.set("order", "desc");
-  const res = await fetchRetry(url.toString(), {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-      "Content-Type": "application/json",
-      "OpenAI-Beta": "assistants=v2",
-    },
-    cache: "no-store",
-    timeoutMs: 20_000,
-  });
-  if (!res.ok) return null;
-  const data = (await res.json()) as {
-    data?: Array<{ id?: string; status?: RunStatus }>;
-  };
-  const r = data?.data?.[0];
-  return r && r.id && r.status ? { id: r.id, status: r.status } : null;
-}
-
-async function cancelRunHTTP(threadId: string, runId: string) {
-  const res = await fetchRetry(
-    `https://api.openai.com/v1/threads/${threadId}/runs/${runId}/cancel`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-        "Content-Type": "application/json",
-        "OpenAI-Beta": "assistants=v2",
-      },
-      timeoutMs: 20_000,
-    }
-  );
-  return res.ok;
-}
-
-/* ------------------------------------------------------------------ */
-/* submit_tool_outputs via HTTP (avoid SDK shape/versioning friction) */
-/* ------------------------------------------------------------------ */
-async function submitToolOutputsCompat(
-  _client: OpenAI, // signature compatibility
-  threadId: string,
-  runId: string,
-  tool_outputs: Array<{ tool_call_id: string; output: string }>
-): Promise<unknown> {
-  try {
-    const res = await fetchRetry(
-      `https://api.openai.com/v1/threads/${threadId}/runs/${runId}/submit_tool_outputs`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-          "Content-Type": "application/json",
-          "OpenAI-Beta": "assistants=v2",
+      type: "function" as const,
+      description:
+        "Create a downloadable PDF summary of the user's OAB discussion and preferences, store it in Firebase Storage, and return a short-lived download URL.",
+      name: "generate_summary_pdf",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          patient_name: {
+            type: "string",
+            description:
+              "User's first name or initials as they prefer to appear on the report.",
+          },
+          symptom_summary: {
+            type: "string",
+            description:
+              "Clear summary of urinary symptoms, severity or frequency, pad use, and relevant scores.",
+          },
+          previous_treatments: {
+            type: "string",
+            description:
+              "Treatments tried to date and their outcomes or side-effects.",
+          },
+          social_factors: {
+            type: "string",
+            description:
+              "Personal or practical factors that affect treatment suitability.",
+          },
+          treatment_recommended: {
+            type: "string",
+            description:
+              "The most suitable treatment recommendation for this user based on the discussion and their preferences.",
+          },
+          treatment_explanation: {
+            type: "string",
+            description:
+              "Why this recommendation suits their case, including benefits, trade-offs, and logistics.",
+          },
+          questions_for_doctor: {
+            type: "string",
+            description:
+              "Tailored questions for the user to discuss with their clinician.",
+          },
+          session_id: {
+            type: "string",
+            description:
+              "Client-side session identifier for grouping reports.",
+          },
+          uid: {
+            type: "string",
+            description:
+              "Anonymous Firebase Auth UID if available.",
+          },
+          thread_id: {
+            type: "string",
+            description:
+              "Conversation trace identifier for report generation.",
+          },
         },
-        cache: "no-store",
-        body: JSON.stringify({ tool_outputs }),
-        timeoutMs: 20_000,
-      }
-    );
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      throw new Error(`HTTP submit_tool_outputs failed ${res.status}: ${text}`);
-    }
-    return await res.json();
-  } catch (err: unknown) {
-    console.error(
-      "[chat] submitToolOutputsCompat failed (HTTP)",
-      err,
-      { threadId, runId, tool_outputs }
-    );
-    throw err;
-  }
+        required: [
+          "patient_name",
+          "symptom_summary",
+          "previous_treatments",
+          "social_factors",
+          "treatment_recommended",
+          "treatment_explanation",
+          "questions_for_doctor",
+          "session_id",
+        ],
+      },
+      strict: false,
+    },
+    {
+      type: "file_search" as const,
+      vector_store_ids: [RESPONSE_VECTOR_STORE_ID],
+    },
+  ];
 }
 
-/* ---------------------------------------- */
-/* Handle "requires_action" immediately now */
-/* ---------------------------------------- */
-async function handleRequiredActionNow(
-  client: OpenAI,
-  req: Request, // kept for future use if you add auth/ip, etc.
-  threadId: string,
-  runId: string
-): Promise<void> {
-  const run = await retrieveRunHTTP(threadId, runId);
-  const toolCalls: ToolFunctionCall[] =
-    run?.required_action?.submit_tool_outputs?.tool_calls ?? [];
-  console.log(
-    "[chat] handleRequiredActionNow: toolCalls",
-    JSON.stringify(
-      toolCalls.map((t) => ({ id: t?.id, name: t?.function?.name, type: t?.type }))
-    )
-  );
-  if (!toolCalls.length) return;
+async function executeGenerateSummaryPdf(
+  call: ResponseFunctionToolCallLike,
+  options: {
+    traceId: string;
+    sessionId: string;
+    firebaseIdToken: string;
+  }
+): Promise<{ call_id: string; output: string }> {
+  let args: Record<string, unknown> = {};
+  try {
+    args = JSON.parse(call.arguments || "{}") as Record<string, unknown>;
+  } catch {
+    args = {};
+  }
 
-  const tool_outputs: Array<{ tool_call_id: string; output: string }> = [];
-
-  for (const call of toolCalls) {
-    if (handledToolCallIds.has(call.id)) continue;
-    if (call?.type !== "function" || !call?.function) continue;
-    if (call.function.name !== "generate_summary_pdf") continue;
-
-    // Parse args coming from the Assistant
-    let args: Record<string, unknown> = {};
-    try {
-      args = JSON.parse(call.function.arguments ?? "{}") as Record<string, unknown>;
-    } catch {
-      /* ignore bad JSON */
-    }
-
-    const payload = {
-      uid: undefined as unknown as string | undefined, // anon; your API returns signed URL
-      threadId: String(threadId),
-      patientName: String(args.patient_name ?? ""),
-      symptomSummary: String(args.symptom_summary ?? ""),
-      previousTreatments: String(args.previous_treatments ?? ""),
-      socialFactors: String(args.social_factors ?? ""),
-      treatmentRecommended: String(args.treatment_recommended ?? ""),
-      treatmentExplanation: String(args.treatment_explanation ?? ""),
-      questionsForDoctor: String(args.questions_for_doctor ?? ""),
-      sessionId: `assistants-${Date.now()}`,
+  if (!PDF_FUNCTION_URL) {
+    return {
+      call_id: call.call_id,
+      output: JSON.stringify({
+        ok: false,
+        error: "PDF function endpoint missing: set PDF_FUNCTION_URL",
+      }),
     };
+  }
 
-    // Call Cloud Function directly (assistant-led URL delivery)
-    if (!PDF_FUNCTION_URL) {
-      console.error(
-        "[chat] Missing PDF_FUNCTION_URL env, cannot generate report"
-      );
-    }
-    const url = PDF_FUNCTION_URL;
-    let outputText = "";
-    try {
-      const resp = await fetchRetry(url, {
+  const payload = {
+    uid: typeof args.uid === "string" ? args.uid : undefined,
+    threadId:
+      typeof args.thread_id === "string" && args.thread_id.trim()
+        ? args.thread_id
+        : options.traceId,
+    patientName: String(args.patient_name ?? ""),
+    symptomSummary: String(args.symptom_summary ?? ""),
+    previousTreatments: String(args.previous_treatments ?? ""),
+    socialFactors: String(args.social_factors ?? ""),
+    treatmentRecommended: String(args.treatment_recommended ?? ""),
+    treatmentExplanation: String(args.treatment_explanation ?? ""),
+    questionsForDoctor: String(args.questions_for_doctor ?? ""),
+    sessionId: options.sessionId || `responses-${Date.now()}`,
+  };
+
+  const headers: HeadersInit = { "Content-Type": "application/json" };
+  if (options.firebaseIdToken) {
+    headers.Authorization = `Bearer ${options.firebaseIdToken}`;
+  }
+
+  try {
+    const callPdfFunction = async (requestHeaders: HeadersInit) => {
+      const resp = await fetchRetry(PDF_FUNCTION_URL, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: requestHeaders,
         cache: "no-store",
         body: JSON.stringify(payload),
         timeoutMs: 20_000,
       });
       const raw = await resp.text();
-      console.log("[chat] CF create-report status:", resp.status);
-      console.log("[chat] CF create-report body:", raw);
+      console.log("[chat] PDF function status:", resp.status);
+      console.log("[chat] PDF function body:", raw);
+      return { resp, raw, data: parsePdfFunctionResult(raw) };
+    };
 
-      const data = parsePdfFunctionResult(raw);
+    let { resp, data } = await callPdfFunction(headers);
 
-      if (
-        resp.ok &&
-        data?.ok &&
-        typeof data.downloadUrl === "string" &&
-        data.downloadUrl.length > 0
-      ) {
-        outputText = data.downloadUrl;
-      } else if (
-        resp.ok &&
-        data?.ok &&
-        typeof data.storagePath === "string" &&
-        data.storagePath.length > 0
-      ) {
-        outputText = `STORAGE_PATH:${data.storagePath}`;
-      } else if (data && "error" in data && typeof data.error !== "undefined") {
-        outputText = `ERROR: ${String(data.error)}`;
-      } else {
-        outputText =
-          `ERROR: PDF function responded without a URL or storage path ` +
-          `(status ${resp.status}).`;
-      }
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.error("[chat] CF create-report fetch failed:", msg);
-      outputText = `ERROR: ${msg}`;
-    }
-
-    tool_outputs.push({
-      tool_call_id: call.id,
-      output:
-        outputText && outputText.startsWith("ERROR:")
-          ? outputText
-          : outputText || "REPORT_READY",
-    });
-
-    handledToolCallIds.add(call.id);
-  }
-
-  if (tool_outputs.length) {
-    try {
-      await submitToolOutputsCompat(client, threadId, runId, tool_outputs);
-    } catch (e) {
-      console.warn(
-        "[chat] non-fatal: submitToolOutputsCompat failed in handleRequiredActionNow",
-        e
+    // Backward compatibility:
+    // the currently deployed Firebase function returns only storagePath for
+    // authenticated requests, so retry once without auth to get a signed URL.
+    if (
+      resp.ok &&
+      data?.ok &&
+      !data.downloadUrl &&
+      !!data.storagePath &&
+      options.firebaseIdToken
+    ) {
+      console.log(
+        "[chat] Authenticated PDF call returned storagePath only; retrying unauthenticated for signed URL"
       );
+      const retry = await callPdfFunction({ "Content-Type": "application/json" });
+      if (retry.resp.ok && retry.data?.downloadUrl) {
+        data = {
+          ...retry.data,
+          storagePath: data.storagePath,
+        };
+        resp = retry.resp;
+      }
     }
+
+    if (!resp.ok) {
+      return {
+        call_id: call.call_id,
+        output: JSON.stringify({
+          ok: false,
+          error:
+            data && typeof data.error !== "undefined"
+              ? String(data.error)
+              : `PDF function error ${resp.status}`,
+        }),
+      };
+    }
+
+    return {
+      call_id: call.call_id,
+      output: JSON.stringify(
+        data ?? {
+          ok: false,
+          error: "PDF function responded without a parseable JSON body",
+        }
+      ),
+    };
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return {
+      call_id: call.call_id,
+      output: JSON.stringify({ ok: false, error: msg }),
+    };
   }
 }
 
-/* --------------- */
-/* POST entrypoint */
-/* --------------- */
+function extractPdfResultFromToolOutput(output: string): PdfFunctionResult | null {
+  return parsePdfFunctionResult(output);
+}
+
+function buildFallbackReply(url: string): string {
+  return (
+    `Ok, I've created your report! You can download it here:\n\n` +
+    `[Download your report here.](${url})\n\n` +
+    `This link will be available for about 48 hours.\n\n` +
+    `Is there anything else you'd like me to assist you with?\n\n`
+  );
+}
+
+function soundsLikePdfFailure(text: string): boolean {
+  const t = text.toLowerCase();
+  return (
+    /server error/.test(t) ||
+    /technical problem/.test(t) ||
+    /tried to create/.test(t) ||
+    /couldn't create/.test(t) ||
+    /could not create/.test(t) ||
+    /try generating the pdf again/.test(t) ||
+    /paste the full written report/.test(t) ||
+    /downloadable pdf three times/.test(t)
+  );
+}
+
 export async function POST(req: Request) {
   try {
     const body = ((await req.json().catch(() => ({}))) ?? {}) as {
       prompt?: string;
       threadId?: string | null;
       newSession?: boolean;
+      sessionId?: string | null;
+      firebaseIdToken?: string | null;
     };
 
-    let lastToolResult: PdfFunctionResult | null = null;
+    const prompt = String(body.prompt ?? "");
+    let threadId = String(body.threadId ?? "");
+    const newSession = !!body.newSession;
+    const sessionId =
+      typeof body.sessionId === "string" && body.sessionId.trim()
+        ? body.sessionId.trim()
+        : `chat-${Date.now()}`;
+    const firebaseIdToken =
+      typeof body.firebaseIdToken === "string" ? body.firebaseIdToken.trim() : "";
 
-    const prompt = String(body?.prompt ?? "");
-    let threadId = String(body?.threadId ?? "");
-    const newSession = !!body?.newSession;
-
-    handledToolCallIds.clear();
-
-    // Normalize accidental literal strings or explicit reset
     if (threadId === "null" || threadId === "undefined") threadId = "";
-    if (newSession) threadId = ""; // force a fresh thread for a new assessment/session
+    if (threadId.startsWith("thread_")) threadId = "";
+    if (newSession) threadId = "";
 
-    // Lightweight in-chat reset for testing
     if (prompt.trim().toLowerCase() === "/reset") {
       return new Response(
         JSON.stringify({
@@ -488,378 +454,165 @@ export async function POST(req: Request) {
         status: 500,
       });
     }
-    if (!process.env.OPENAI_ASSISTANT_ID) {
-      return new Response(
-        JSON.stringify({ error: "Missing OPENAI_ASSISTANT_ID" }),
-        { status: 500 }
-      );
-    }
 
     const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-    // 1) Ensure a valid thread
     if (threadId) {
       try {
-        await client.beta.threads.retrieve(threadId);
+        await client.responses.retrieve(threadId);
       } catch {
         threadId = "";
       }
     }
-    if (!threadId) {
-      const th = await client.beta.threads.create();
-      const created = th as unknown as { id?: string };
-      threadId = created?.id || "";
-    }
-    if (!threadId || !threadId.startsWith("thread_")) {
-      return new Response(
-        JSON.stringify({ error: "Invalid threadId", threadId }),
-        { status: 500 }
-      );
-    }
 
-    // 2) Intent routing and lingering-run cancel
     const wantNewReport = isNewReportRequest(prompt);
     const wantLinkOnly = !wantNewReport && isSendLinkRequest(prompt);
-
-    try {
-      if (!wantNewReport && !wantLinkOnly) {
-        const latestMaybe = await listRunsLatestHTTPWithStatus(threadId);
-        const activeStates = new Set<RunStatus>([
-          "queued",
-          "in_progress",
-          "requires_action",
-        ]);
-        if (latestMaybe && activeStates.has(latestMaybe.status)) {
-          await cancelRunHTTP(threadId, latestMaybe.id);
-        }
-      }
-    } catch {
-      /* non-fatal */
-    }
-
-    // Guard: if latest run is active, try to finish it (incl. tools) or return a soft-busy payload
-    if (threadId) {
-      const activeStates = new Set<RunStatus>([
-        "queued",
-        "in_progress",
-        "requires_action",
-      ]);
-      let latest = await listRunsLatestHTTPWithStatus(threadId);
-
-      if (latest && activeStates.has(latest.status)) {
-        const start = Date.now();
-
-        while (
-          latest &&
-          activeStates.has(latest.status) &&
-          Date.now() - start < 20_000
-        ) {
-          if (latest.status === "requires_action") {
-            try {
-              await handleRequiredActionNow(client, req, threadId, latest.id);
-            } catch (e) {
-              console.warn("[chat] handleRequiredActionNow (pre-message) failed:", e);
-            }
-            latest = await listRunsLatestHTTPWithStatus(threadId);
-            continue;
-          }
-          await wait(400);
-          latest = await listRunsLatestHTTPWithStatus(threadId);
-        }
-
-        if (latest && activeStates.has(latest.status)) {
-          return new Response(
-            JSON.stringify({
-              reply:
-                "I’m very sorry, but there’s been a technical problem on my side generating your PDF report just now. I don’t have a downloadable report link at the moment.\n\n" +
-                "If it’s helpful, I can provide a full written summary here in the chat that you can save or screenshot, or attempt the PDF generation again later while I work on fixing the issue.\n\n" +
-                "Please let me know how you’d like to proceed. I’m here to help however I can.",
-              threadId,
-              runId: latest.id,
-              status: latest.status,
-            }),
-            { status: 200, headers: { "Content-Type": "application/json" } }
-          );
-        }
-      }
-    }
-
-    // Try to preload a prior canonical report URL (for "send link again" turns)
-    const priorUrl = await findLatestReportUrlFromThread(client, threadId);
+    let lastToolResult: PdfFunctionResult | null = null;
+    const priorUrl =
+      wantLinkOnly && threadId
+        ? await findLatestReportUrlFromResponseChain(client, threadId)
+        : "";
     if (priorUrl) {
-      lastToolResult = { downloadUrl: priorUrl };
+      lastToolResult = { ok: true, downloadUrl: priorUrl };
     }
 
-    // 3) Add user message
-    await client.beta.threads.messages.create(threadId, {
-      role: "user",
-      content: prompt,
-    });
+    let response = (await client.responses.create({
+      prompt: {
+        id: RESPONSE_PROMPT_ID,
+        version: RESPONSE_PROMPT_VERSION,
+      },
+      input: prompt,
+      previous_response_id: threadId || undefined,
+      reasoning: {
+        summary: "auto",
+      },
+      tools: buildResponsesTools(),
+      store: true,
+      include: [
+        "reasoning.encrypted_content",
+      ],
+      metadata: {
+        app: "oab-web",
+        chat_api: "responses",
+      },
+    })) as unknown as ResponseLike;
 
-    // 4) Create a run
-    const createdRun = await client.beta.threads.runs.create(threadId, {
-      assistant_id: process.env.OPENAI_ASSISTANT_ID!,
-    });
-    console.log("[chat] createdRun raw", createdRun);
-
-    type CreatedRunLike = { id?: string; thread_id?: string; status?: RunStatus };
-    let runId = (createdRun as CreatedRunLike).id || "";
-    const runThreadId = (createdRun as CreatedRunLike).thread_id || "";
-
-    if (runThreadId && runThreadId.startsWith("thread_")) {
-      threadId = runThreadId;
-    }
-    if (!runId || !runId.startsWith("run_")) {
-      runId = await listRunsLatestHTTP(threadId);
-    }
-    if (!runId.startsWith("run_")) {
-      return new Response(
-        JSON.stringify({ error: "Invalid runId created/listed", threadId, runId }),
-        { status: 500 }
-      );
-    }
-
-    // 5) Poll run until completed (45s timeout)
-    let status: RunStatus = (createdRun as CreatedRunLike).status || "queued";
+    const handledCallIds = new Set<string>();
     const deadline = Date.now() + 45_000;
 
-    while (status !== "completed") {
-      if (Date.now() > deadline) {
-        if (lastToolResult?.downloadUrl) {
-          const url = String(lastToolResult.downloadUrl);
-          const finalReply =
-            `Ok, I've created your report! You can download it here:\n\n` +
-            `[Download your report here.](${url})\n\n` +
-            `This link will be available for about 48 hours.\n\n` +
-            `Is there anything else you'd like me to assist you with?\n\n`;
-          return new Response(
-            JSON.stringify({ reply: finalReply, threadId }),
-            { status: 200 }
-          );
-        }
-        if (lastToolResult?.storagePath) {
-          return new Response(
-            JSON.stringify({
-              reply:
-                "The PDF was written to Firebase Storage, but I couldn't resolve " +
-                "a download URL in time.\n\n" +
-                `Storage path: ${lastToolResult.storagePath}`,
-              threadId,
+    while (Date.now() < deadline) {
+      if (response.error?.message) {
+        throw new Error(response.error.message);
+      }
+
+      const functionCalls = getFunctionCalls(response).filter(
+        (call) => !handledCallIds.has(call.call_id)
+      );
+
+      if (!functionCalls.length) break;
+
+      const toolOutputs: Array<{
+        type: "function_call_output";
+        call_id: string;
+        output: string;
+      }> = [];
+
+      for (const call of functionCalls) {
+        if (call.name !== "generate_summary_pdf") {
+          toolOutputs.push({
+            type: "function_call_output",
+            call_id: call.call_id,
+            output: JSON.stringify({
+              ok: false,
+              error: `Unsupported function: ${call.name}`,
             }),
-            { status: 200 }
-          );
-        }
-        // Tell the client to retry; avoid 60s platform timeout
-        return new Response(
-          JSON.stringify({ reason: "run_active", threadId, runId }),
-          { status: 202 }
-        );
-      }
-
-      await wait(400);
-
-      // Guard against accidental undefined threadId
-      if (!threadId || !threadId.startsWith("thread_")) {
-        return new Response(
-          JSON.stringify({ error: "threadId lost before retrieve", threadId, runId }),
-          { status: 500 }
-        );
-      }
-
-      console.log("[chat] about-to-retrieve", {
-        threadId,
-        runId,
-        types: { thread: typeof threadId, run: typeof runId },
-      });
-
-      try {
-        const refreshed = await retrieveRunHTTP(threadId, runId);
-        status = refreshed.status;
-
-        if (status === "requires_action") {
-          console.log("[chat] run requires_action – inspecting tool calls…");
-          const toolCalls: ToolFunctionCall[] =
-            refreshed?.required_action?.submit_tool_outputs?.tool_calls ?? [];
-          const tool_outputs: Array<{ tool_call_id: string; output: string }> = [];
-
-          for (const call of toolCalls) {
-            if (handledToolCallIds.has(call.id)) continue;
-            if (call?.type !== "function" || !call?.function) continue;
-            if (call.function.name !== "generate_summary_pdf") continue;
-
-            let args: Record<string, unknown> = {};
-            try {
-              args = JSON.parse(call.function.arguments ?? "{}") as Record<string, unknown>;
-            } catch {
-              /* ignore bad JSON */
-            }
-
-            const payload = {
-              uid: undefined as unknown as string | undefined,
-              threadId: String(threadId),
-              patientName: String(args.patient_name ?? ""),
-              symptomSummary: String(args.symptom_summary ?? ""),
-              previousTreatments: String(args.previous_treatments ?? ""),
-              socialFactors: String(args.social_factors ?? ""),
-              treatmentRecommended: String(args.treatment_recommended ?? ""),
-              treatmentExplanation: String(args.treatment_explanation ?? ""),
-              questionsForDoctor: String(args.questions_for_doctor ?? ""),
-              sessionId: `assistants-${Date.now()}`,
-            };
-
-            if (!PDF_FUNCTION_URL) {
-              console.error("[chat] Missing PDF_FUNCTION_URL env, cannot generate report");
-            }
-
-            let outputText = "";
-            try {
-              const resp = await fetchRetry(PDF_FUNCTION_URL, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                cache: "no-store",
-                body: JSON.stringify(payload),
-                timeoutMs: 20_000,
-              });
-              const raw = await resp.text();
-              console.log("[chat] CF create-report status:", resp.status);
-              console.log("[chat] CF create-report body:", raw);
-
-              const data = parsePdfFunctionResult(raw);
-              lastToolResult = data || lastToolResult;
-
-              if (
-                resp.ok &&
-                data?.ok &&
-                typeof data.downloadUrl === "string" &&
-                data.downloadUrl.length > 0
-              ) {
-                outputText = data.downloadUrl;
-              } else if (
-                resp.ok &&
-                data?.ok &&
-                typeof data.storagePath === "string" &&
-                data.storagePath.length > 0
-              ) {
-                outputText = `STORAGE_PATH:${data.storagePath}`;
-              } else if (data && "error" in data && typeof data.error !== "undefined") {
-                outputText = `ERROR: ${String(data.error)}`;
-              } else {
-                outputText =
-                  `ERROR: PDF function responded without a URL or storage path ` +
-                  `(status ${resp.status}).`;
-              }
-            } catch (e: unknown) {
-              const msg = e instanceof Error ? e.message : String(e);
-              outputText = `ERROR: ${msg}`;
-            }
-
-            tool_outputs.push({
-              tool_call_id: call.id,
-              output:
-                outputText && outputText.startsWith("ERROR:")
-                  ? outputText
-                  : outputText || "REPORT_READY",
-            });
-            handledToolCallIds.add(call.id);
-          }
-
-          if (tool_outputs.length) {
-            try {
-              await submitToolOutputsCompat(client, threadId, runId, tool_outputs);
-            } catch (e) {
-              console.warn(
-                "[chat] non-fatal: submitToolOutputsCompat failed after tool_outputs",
-                e
-              );
-            }
-            continue; // let Assistant finish message; keep polling
-          }
-        }
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        console.warn("[chat] retrieve error", msg, { threadId, runId });
-
-        if (
-          /Cannot destructure property 'thread_id' of 'params' as it is undefined/i.test(
-            msg
-          )
-        ) {
-          try {
-            const latestId = await listRunsLatestHTTP(threadId);
-            if (latestId && latestId.startsWith("run_")) {
-              runId = latestId;
-            }
-          } catch {
-            /* ignore */
-          }
-          await wait(1000);
+          });
+          handledCallIds.add(call.call_id);
           continue;
         }
 
+        const result = await executeGenerateSummaryPdf(call, {
+          traceId: response.id || threadId || "",
+          sessionId,
+          firebaseIdToken,
+        });
+        const parsedResult = extractPdfResultFromToolOutput(result.output);
+        if (parsedResult) {
+          lastToolResult = parsedResult;
+        }
+        toolOutputs.push({
+          type: "function_call_output",
+          call_id: result.call_id,
+          output: result.output,
+        });
+        handledCallIds.add(call.call_id);
+      }
+
+      response = (await client.responses.create({
+        prompt: {
+          id: RESPONSE_PROMPT_ID,
+          version: RESPONSE_PROMPT_VERSION,
+        },
+        previous_response_id: response.id,
+        input: toolOutputs,
+        reasoning: {
+          summary: "auto",
+        },
+        tools: buildResponsesTools(),
+        store: true,
+        include: [
+          "reasoning.encrypted_content",
+        ],
+        metadata: {
+          app: "oab-web",
+          chat_api: "responses",
+        },
+      })) as unknown as ResponseLike;
+    }
+
+    if (Date.now() >= deadline) {
+      if (lastToolResult?.downloadUrl) {
         return new Response(
           JSON.stringify({
-            error: "runs.retrieve threw",
-            message: msg,
-            threadId,
-            runId,
+            reply: buildFallbackReply(String(lastToolResult.downloadUrl)),
+            threadId: response.id || threadId,
           }),
-          { status: 500 }
+          { status: 200 }
         );
       }
-
-      if (status === "failed" || status === "cancelled" || status === "expired") {
-        return new Response(
-          JSON.stringify({ error: `Run ${status}`, threadId, runId }),
-          { status: 500 }
-        );
-      }
+      return new Response(
+        JSON.stringify({
+          reply:
+            "I’m very sorry, but there’s been a technical problem on my side generating your PDF report just now. I don’t have a downloadable report link at the moment.\n\n" +
+            "If it’s helpful, I can provide a full written summary here in the chat that you can save or screenshot, or attempt the PDF generation again later while I work on fixing the issue.\n\n" +
+            "Please let me know how you’d like to proceed. I’m here to help however I can.",
+          threadId: response.id || threadId,
+        }),
+        { status: 200 }
+      );
     }
 
-    // 6) Read latest assistant text
-    const list = await client.beta.threads.messages.list(threadId, {
-      order: "desc",
-      limit: 15,
-    });
-    const assistantMsg = (list.data as unknown as ThreadMessage[]).find(
-      (m) =>
-        m.role === "assistant" &&
-        Array.isArray(m.content) &&
-        m.content.some(
-          (c) => (c as TextContent)?.type === "text" && (c as TextContent).text?.value
-        )
+    const finalThreadId = String(response.id || threadId || "");
+    let finalReply = extractTextFromResponse(response);
+    const canonicalUrl = String(
+      lastToolResult?.downloadUrl || priorUrl || ""
     );
-    const reply = assistantMsg ? extractTextFromMessage(assistantMsg) : "";
 
-    // Sanitize/normalize links if we have a canonical downloadUrl
-    let sanitizedReply = reply;
-    const canonicalUrl = lastToolResult?.downloadUrl ? String(lastToolResult.downloadUrl) : "";
-    if (canonicalUrl) {
-      sanitizedReply = sanitizedReply.replace(
-        /\[(.*?)\]\(sandbox:\/download\/[^\)]+\)/gi,
-        `[$1](${canonicalUrl})`
-      );
-      sanitizedReply = sanitizedReply.replace(/sandbox:\/download\/\S+/gi, canonicalUrl);
-      sanitizedReply = sanitizedReply.replace(
-        /\[(.*?)\]\((https?:\/\/[^\s)]+)\)/gi,
-        (m, text) => {
-          const t = String(text || "");
-          if (/download|report/i.test(t)) {
-            return `[${t}](${canonicalUrl})`;
-          }
-          return m;
-        }
-      );
-      sanitizedReply = sanitizedReply.replace(/^(https?:\/\/[^\s)]+)\s*$/gmi, () => canonicalUrl);
+    if (canonicalUrl && finalReply && soundsLikePdfFailure(finalReply)) {
+      finalReply = buildFallbackReply(canonicalUrl);
     }
 
-    let finalReply = sanitizedReply;
-    if (!finalReply && lastToolResult?.downloadUrl) {
-      const url = String(lastToolResult.downloadUrl);
-      finalReply =
-        `Ok, I've created your report! You can download it here:\n\n` +
-        `[Download your report here.](${url})\n\n` +
-        `This link will be available for about 48 hours.\n` +
-        `Is there anything else you'd like me to assist you with?\n\n`;
+    if (canonicalUrl && finalReply) {
+      const urls = extractUrls(finalReply);
+      if (!urls.length && /download|report/i.test(finalReply)) {
+        finalReply =
+          `${finalReply.trim()}\n\n` +
+          `[Download your report here.](${canonicalUrl})`;
+      }
+    }
+
+    if (!finalReply && canonicalUrl) {
+      finalReply = buildFallbackReply(canonicalUrl);
     }
     if (!finalReply && lastToolResult?.storagePath) {
       finalReply =
@@ -872,22 +625,13 @@ export async function POST(req: Request) {
         "The report was generated, but I couldn’t retrieve the message. Please try again.";
     }
 
-    if (assistantMsg && extractTextFromMessage(assistantMsg)) {
-      return new Response(JSON.stringify({ reply: finalReply, threadId }), {
-        status: 200,
-      });
-    }
-    try {
-      await client.beta.threads.messages.create(threadId, {
-        role: "assistant",
-        content: finalReply,
-      });
-    } catch (e) {
-      console.warn("[chat] failed to append finalReply to thread", e);
-    }
-    return new Response(JSON.stringify({ reply: finalReply, threadId }), {
-      status: 200,
-    });
+    return new Response(
+      JSON.stringify({
+        reply: finalReply,
+        threadId: finalThreadId,
+      }),
+      { status: 200 }
+    );
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     return new Response(JSON.stringify({ error: msg ?? "Unknown error" }), {

@@ -6,7 +6,7 @@
  * Usage (unauthenticated; returns short-lived signed URL):
  *   node generatePdf.js
  *
- * Usage (authenticated; returns storagePath):
+ * Usage (authenticated; typically returns storagePath and may also return downloadUrl):
  *   node generatePdf.js --token="FIREBASE_ID_TOKEN"
  *
  * Custom payload file:
@@ -66,6 +66,15 @@ function loadPayloadFromFile(p) {
   return JSON.parse(txt);
 }
 
+function normalizeMultilineText(value) {
+  if (Array.isArray(value)) {
+    return value.map(function(item) {
+      return coerceText(item, '');
+    }).filter(Boolean).join('\n');
+  }
+  return coerceText(value);
+}
+
 function buildDefaultPayload() {
   return {
     patientName: 'Test Patient',
@@ -98,8 +107,9 @@ function validateMinimal(payload) {
 
 /**
  * Calls the Cloud Function and returns the JSON response.
- * If `idToken` is provided, the function will return { mode:'storage', storagePath }
- * Otherwise it returns { mode:'signed-url', downloadUrl, expiresAt }
+ * Older deployed versions may return only { mode:'storage', storagePath } for
+ * authenticated requests. In that case, retry once without auth to obtain a
+ * signed URL for compatibility testing.
  */
 async function generateSummaryPdf(payload, options) {
   var opts = options || {};
@@ -114,7 +124,7 @@ async function generateSummaryPdf(payload, options) {
     socialFactors: coerceText(payload.socialFactors),
     treatmentRecommended: coerceText(payload.treatmentRecommended),
     treatmentExplanation: coerceText(payload.treatmentExplanation),
-    questionsForDoctor: coerceText(payload.questionsForDoctor),
+    questionsForDoctor: normalizeMultilineText(payload.questionsForDoctor),
     sessionId: isString(payload.sessionId) && payload.sessionId ? String(payload.sessionId) : 'nosession'
   };
 
@@ -124,7 +134,20 @@ async function generateSummaryPdf(payload, options) {
   }
 
   var res = await axios.post(url, body, { headers: headers });
-  return res.data;
+  var data = res.data;
+
+  if (idToken && data && data.storagePath && !data.downloadUrl) {
+    var retry = await axios.post(url, body, {
+      headers: { 'Content-Type': 'application/json' }
+    });
+    if (retry.data && retry.data.downloadUrl) {
+      data = Object.assign({}, retry.data, {
+        storagePath: data.storagePath
+      });
+    }
+  }
+
+  return data;
 }
 
 // ---- CLI runner
@@ -172,7 +195,7 @@ async function main() {
       console.log('✅ PDF Link:', data.downloadUrl);
     } else if (data && data.storagePath) {
       console.log('✅ Storage Path:', data.storagePath);
-      console.log('   (Use Firebase Storage getDownloadURL() on the client for owner-only access.)');
+      console.log('   (Authenticated path only. The deployed function may still be on the older response shape.)');
     } else {
       console.log('ℹ️ No link returned; full response printed above.');
     }

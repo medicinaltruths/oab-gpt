@@ -1,12 +1,30 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import { ensureAnonIdToken } from "@/lib/firebase";
 
 const THREAD_KEY = "oab_thread_id";
+const CHAT_SESSION_KEY = "oab_chat_session_id";
 const LAST_ACTIVITY_KEY = "oab_last_activity";
 const THREAD_IDLE_MS = 45 * 60 * 1000; // 45 minutes: start a fresh thread after inactivity
 
 type Message = { role: "user" | "assistant"; content: string };
+
+function ensureChatSessionId(): string {
+  if (typeof window === "undefined") {
+    return `session-${Date.now()}`;
+  }
+
+  const existing = localStorage.getItem(CHAT_SESSION_KEY);
+  if (existing && existing.trim()) return existing;
+
+  const nextId =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? `session-${crypto.randomUUID()}`
+      : `session-${Date.now()}`;
+  localStorage.setItem(CHAT_SESSION_KEY, nextId);
+  return nextId;
+}
 
 const HOW_FELICITY_ACCORDION_ITEMS: Array<{ title: string; points: string[] }> = [
   {
@@ -331,13 +349,25 @@ function ChatPane() {
     setBusy(true);
 
     try {
+      const sessionId = ensureChatSessionId();
+      const firebaseIdToken = await ensureAnonIdToken().catch((err) => {
+        console.error("Failed to get Firebase ID token for PDF generation", err);
+        return "";
+      });
+
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, threadId }),
+        body: JSON.stringify({
+          prompt,
+          threadId,
+          sessionId,
+          firebaseIdToken: firebaseIdToken || undefined,
+        }),
       });
 
       const data: { threadId?: string; reply?: string; reason?: string } = await res.json();
+      const replyText = data.reply || "…";
 
       if (data.threadId && data.threadId !== threadId) {
         setThreadId(data.threadId);
@@ -355,7 +385,12 @@ function ChatPane() {
               const retry = await fetch("/api/chat", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ prompt, threadId }),
+                body: JSON.stringify({
+                  prompt,
+                  threadId,
+                  sessionId,
+                  firebaseIdToken: firebaseIdToken || undefined,
+                }),
               });
 
               const retryData = (await retry.json()) as {
@@ -390,7 +425,7 @@ function ChatPane() {
 
       setMessages((m) => [
         ...m,
-        { role: "assistant", content: data.reply || "…" },
+        { role: "assistant", content: replyText },
       ]);
       taRef.current?.focus({ preventScroll: true } as FocusOptions);
     } finally {
@@ -402,6 +437,7 @@ function ChatPane() {
     setThreadId(null);
     if (typeof window !== "undefined") {
       localStorage.removeItem(THREAD_KEY);
+      localStorage.removeItem(CHAT_SESSION_KEY);
       localStorage.setItem(LAST_ACTIVITY_KEY, String(Date.now()));
     }
     setMessages([
