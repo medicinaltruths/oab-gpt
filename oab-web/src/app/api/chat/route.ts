@@ -50,28 +50,6 @@ function fetchWithTimeout(
   );
 }
 
-async function fetchRetry(
-  input: RequestInfo | URL,
-  init: RequestInit & { timeoutMs?: number } = {},
-  tries = 3
-): Promise<Response> {
-  let lastErr: unknown = null;
-  for (let i = 0; i < tries; i++) {
-    try {
-      const res = await fetchWithTimeout(input, init);
-      if (res.status >= 500 || res.status === 429) {
-        lastErr = new Error(`HTTP ${res.status}`);
-      } else {
-        return res;
-      }
-    } catch (e) {
-      lastErr = e;
-    }
-    await wait(400 * Math.pow(2, i));
-  }
-  throw lastErr ?? new Error("fetchRetry failed");
-}
-
 function isNewReportRequest(text: string): boolean {
   const t = (text || "").toLowerCase();
   return (
@@ -314,53 +292,89 @@ async function executeGenerateSummaryPdf(
 
   try {
     const callPdfFunction = async (requestHeaders: HeadersInit) => {
-      const resp = await fetchRetry(PDF_FUNCTION_URL, {
-        method: "POST",
-        headers: requestHeaders,
-        cache: "no-store",
-        body: JSON.stringify(payload),
-        timeoutMs: 20_000,
-      });
-      const raw = await resp.text();
-      console.log("[chat] PDF function status:", resp.status);
-      console.log("[chat] PDF function body:", raw);
-      return { resp, raw, data: parsePdfFunctionResult(raw) };
+      let lastResp: Response | null = null;
+      let lastRaw = "";
+      let lastErr: unknown = null;
+
+      for (let i = 0; i < 3; i++) {
+        try {
+          const resp = await fetchWithTimeout(PDF_FUNCTION_URL, {
+            method: "POST",
+            headers: requestHeaders,
+            cache: "no-store",
+            body: JSON.stringify(payload),
+            timeoutMs: 20_000,
+          });
+          const raw = await resp.text();
+          console.log("[chat] PDF function status:", resp.status);
+          console.log("[chat] PDF function body:", raw);
+
+          lastResp = resp;
+          lastRaw = raw;
+
+          if (resp.status >= 500 || resp.status === 429) {
+            lastErr = new Error(`HTTP ${resp.status}`);
+            await wait(400 * Math.pow(2, i));
+            continue;
+          }
+
+          return { resp, raw, data: parsePdfFunctionResult(raw) };
+        } catch (err: unknown) {
+          lastErr = err;
+          await wait(400 * Math.pow(2, i));
+        }
+      }
+
+      return {
+        resp: lastResp,
+        raw: lastRaw,
+        data: parsePdfFunctionResult(lastRaw),
+        error:
+          lastErr instanceof Error ? lastErr.message : String(lastErr ?? ""),
+      };
     };
 
-    let { resp, data } = await callPdfFunction(headers);
+    let { resp, raw, data, error } = await callPdfFunction(headers);
 
     // Backward compatibility:
     // the currently deployed Firebase function returns only storagePath for
     // authenticated requests, so retry once without auth to get a signed URL.
     if (
-      resp.ok &&
-      data?.ok &&
-      !data.downloadUrl &&
-      !!data.storagePath &&
       options.firebaseIdToken
     ) {
-      console.log(
-        "[chat] Authenticated PDF call returned storagePath only; retrying unauthenticated for signed URL"
-      );
-      const retry = await callPdfFunction({ "Content-Type": "application/json" });
-      if (retry.resp.ok && retry.data?.downloadUrl) {
-        data = {
-          ...retry.data,
-          storagePath: data.storagePath,
-        };
-        resp = retry.resp;
+      const shouldRetryWithoutAuth =
+        !resp ||
+        !resp.ok ||
+        (data?.ok && !data.downloadUrl && !!data.storagePath);
+
+      if (shouldRetryWithoutAuth) {
+        console.log(
+          "[chat] Retrying PDF function without auth header after auth attempt failed or returned no usable link"
+        );
+        const retry = await callPdfFunction({ "Content-Type": "application/json" });
+        if (retry.resp?.ok) {
+          data = {
+            ...(retry.data ?? {}),
+            storagePath: data?.storagePath ?? retry.data?.storagePath,
+          };
+          resp = retry.resp;
+          raw = retry.raw;
+          error = retry.error;
+        }
       }
     }
 
-    if (!resp.ok) {
+    if (!resp?.ok) {
+      const detail =
+        (data && typeof data.error !== "undefined" && String(data.error)) ||
+        raw ||
+        error ||
+        `PDF function error ${resp?.status ?? "unknown"}`;
       return {
         call_id: call.call_id,
         output: JSON.stringify({
           ok: false,
-          error:
-            data && typeof data.error !== "undefined"
-              ? String(data.error)
-              : `PDF function error ${resp.status}`,
+          error: detail,
         }),
       };
     }
