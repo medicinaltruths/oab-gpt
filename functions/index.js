@@ -4,6 +4,7 @@
 const { onRequest } = require("firebase-functions/v2/https");
 const { setGlobalOptions } = require("firebase-functions/v2");
 const admin = require("firebase-admin");
+const twilio = require("twilio");
 const corsMW = require("cors");
 const { PDFDocument, rgb, StandardFonts } = require("pdf-lib");
 
@@ -12,6 +13,17 @@ const BUILD_TAG = "generateSummaryPdf v4 (2026-04-14)";
 // ===== Configure =====
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "*"; // e.g. "https://oab.yourdomain.com"
 const SIGNED_URL_FALLBACK_MINUTES = 48 * 60; // 48 hours for unauthenticated test calls
+const TWILIO_WHATSAPP_MODE =
+  (process.env.TWILIO_WHATSAPP_MODE || "sandbox").toLowerCase();
+const TWILIO_WHATSAPP_SANDBOX_KEYWORD =
+  process.env.TWILIO_WHATSAPP_SANDBOX_KEYWORD || "plan-simple";
+const TWILIO_WHATSAPP_INITIAL_MESSAGE =
+  process.env.TWILIO_WHATSAPP_INITIAL_MESSAGE ||
+  "Hi Felicity, let's get started";
+const TWILIO_VALIDATE_SIGNATURE =
+  (process.env.TWILIO_VALIDATE_SIGNATURE || "true").toLowerCase() !== "false";
+const CHAT_API_URL =
+  process.env.CHAT_API_URL || "https://oab-gpt.vercel.app/api/chat";
 const cors = corsMW({ origin: ALLOWED_ORIGIN, credentials: true });
 
 // Init Admin
@@ -20,6 +32,7 @@ if (!admin.apps.length) {
 }
 const bucket = admin.storage().bucket();
 const auth = admin.auth();
+const db = admin.firestore();
 setGlobalOptions({ region: "europe-west2", timeoutSeconds: 60, memoryMiB: 512 });
 
 // ------- Helpers -------
@@ -32,6 +45,150 @@ function coerceText(x, fallback) {
   if (x === undefined || x === null) return fb;
   const s = String(x);
   return s.trim().length ? s.trim() : fb;
+}
+
+function normalizeUkPhoneNumber(value) {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return "";
+
+  const hasPlus = trimmed.startsWith("+");
+  const digits = trimmed.replace(/\D/g, "");
+
+  if (!digits) return "";
+  if (hasPlus && digits.startsWith("44")) return `+${digits}`;
+  if (digits.startsWith("44")) return `+${digits}`;
+  if (digits.startsWith("07") && digits.length === 11) return `+44${digits.slice(1)}`;
+  if (digits.startsWith("7") && digits.length === 10) return `+44${digits}`;
+  if (digits.startsWith("0") && digits.length >= 10) return `+44${digits.slice(1)}`;
+  return hasPlus ? `+${digits}` : digits;
+}
+
+function isUkMobileNumber(value) {
+  return /^\+447\d{9}$/.test(String(value || ""));
+}
+
+function whatsappContactDocId(phoneNumber) {
+  return String(phoneNumber || "").replace(/\D/g, "");
+}
+
+function normalizeTwilioAddress(value) {
+  const raw = String(value || "").replace(/^whatsapp:/i, "").trim();
+  if (!raw) return "";
+  if (raw.startsWith("+")) return `+${raw.replace(/\D/g, "")}`;
+  return normalizeUkPhoneNumber(raw);
+}
+
+function isSandboxWhatsappMode() {
+  return TWILIO_WHATSAPP_MODE !== "live";
+}
+
+function parseFormBody(req) {
+  if (req.body && typeof req.body === "object" && !Buffer.isBuffer(req.body)) {
+    return req.body;
+  }
+
+  let raw = "";
+  if (typeof req.body === "string") {
+    raw = req.body;
+  } else if (Buffer.isBuffer(req.body)) {
+    raw = req.body.toString("utf8");
+  } else if (req.rawBody) {
+    raw = Buffer.isBuffer(req.rawBody) ? req.rawBody.toString("utf8") : String(req.rawBody);
+  }
+
+  const params = new URLSearchParams(raw);
+  const out = {};
+  for (const [key, value] of params.entries()) {
+    out[key] = value;
+  }
+  return out;
+}
+
+function getRequestUrl(req) {
+  const protoHeader = String(req.headers["x-forwarded-proto"] || req.protocol || "https");
+  const proto = protoHeader.split(",")[0].trim() || "https";
+  const host = req.get("host") || req.headers.host || "";
+  const originalUrl = req.originalUrl || req.url || "";
+  return `${proto}://${host}${originalUrl}`;
+}
+
+function isValidTwilioRequest(req, params) {
+  if (!TWILIO_VALIDATE_SIGNATURE) return true;
+  const authToken = process.env.TWILIO_AUTH_TOKEN || "";
+  const signature = req.get("X-Twilio-Signature") || "";
+
+  if (!authToken || !signature) return false;
+
+  return twilio.validateRequest(
+    authToken,
+    signature,
+    getRequestUrl(req),
+    params
+  );
+}
+
+function escapeXml(text) {
+  return String(text || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+function buildMessagingTwiml(text) {
+  const body = String(text || "").trim();
+  if (!body) {
+    return "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response></Response>";
+  }
+
+  return (
+    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>" +
+    "<Response><Message>" +
+    escapeXml(body) +
+    "</Message></Response>"
+  );
+}
+
+function formatReplyForWhatsapp(text) {
+  return String(text || "")
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, "$1: $2")
+    .replace(/[*_`]/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function buildWhatsappPrompt(options) {
+  const contactName = String(options.contactName || "").trim();
+  const userMessage = String(options.userMessage || "").trim();
+  const hasExistingThread = !!options.hasExistingThread;
+
+  const prefix =
+    "Context: the user is messaging via WhatsApp. Reply in plain text suitable " +
+    "for WhatsApp, concise, warm, and easy to read. Avoid markdown tables.";
+  const nameLine =
+    !hasExistingThread && contactName
+      ? `The user's preferred name from signup is ${contactName}.`
+      : "";
+
+  return [prefix, nameLine, `User message: ${userMessage}`].filter(Boolean).join("\n\n");
+}
+
+async function postToChatApi(payload) {
+  const response = await fetch(CHAT_API_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Chat API ${response.status}: ${errorText}`);
+  }
+
+  return response.json();
 }
 
 // Width-aware word-wrap; also breaks long tokens so lines never overflow
@@ -402,4 +559,182 @@ exports.generateSummaryPdf = onRequest(async (req, res) => {
       return res.status(500).json({ ok: false, error: msg });
     }
   });
+});
+
+exports.saveWhatsappContact = onRequest(async (req, res) => {
+  return cors(req, res, async function() {
+    try {
+      if (req.method !== "POST") {
+        return res.status(405).json({ error: "Use POST" });
+      }
+
+      const ct = req.headers["content-type"] || "";
+      if (!/application\/json/i.test(ct)) {
+        return res.status(415).json({ error: "Content-Type must be application/json" });
+      }
+
+      const body = req.body || {};
+      const name = String(body.name || "").trim();
+      const source = String(body.source || "website").trim() || "website";
+      const phoneNumber = normalizeUkPhoneNumber(body.phoneNumber);
+      const whatsappMode = String(
+        body.whatsappMode || TWILIO_WHATSAPP_MODE
+      ).trim().toLowerCase() || TWILIO_WHATSAPP_MODE;
+      const starterMessage = String(
+        body.starterMessage ||
+          (isSandboxWhatsappMode() ?
+            `join ${TWILIO_WHATSAPP_SANDBOX_KEYWORD}` :
+            TWILIO_WHATSAPP_INITIAL_MESSAGE)
+      ).trim();
+
+      if (!name) {
+        return res.status(400).json({ ok: false, error: "Missing name" });
+      }
+
+      if (!isUkMobileNumber(phoneNumber)) {
+        return res.status(400).json({ ok: false, error: "Invalid UK mobile number" });
+      }
+
+      const now = admin.firestore.FieldValue.serverTimestamp();
+      const ref = db.collection("whatsappContacts").doc(whatsappContactDocId(phoneNumber));
+      const existing = await ref.get();
+
+      await ref.set({
+        phoneNumber,
+        name,
+        source,
+        updatedAt: now,
+        createdAt: existing.exists ? existing.get("createdAt") || now : now,
+        latestChannel: "website",
+        sandboxKeyword: TWILIO_WHATSAPP_SANDBOX_KEYWORD,
+        whatsappMode: whatsappMode,
+        starterMessage: starterMessage || null,
+        openAiResponseId: existing.exists ? existing.get("openAiResponseId") || null : null,
+      }, {merge: true});
+
+      return res.status(200).json({
+        ok: true,
+        phoneNumber,
+        stored: true,
+      });
+    } catch (err) {
+      const msg = (err && err.message) ? err.message : String(err);
+      console.error("saveWhatsappContact error:", msg);
+      return res.status(500).json({ ok: false, error: msg });
+    }
+  });
+});
+
+exports.twilioWhatsappWebhook = onRequest(async (req, res) => {
+  try {
+    if (req.method !== "POST") {
+      return res.status(405).type("text/plain").send("Use POST");
+    }
+
+    const body = parseFormBody(req);
+    if (!isValidTwilioRequest(req, body)) {
+      return res.status(403).type("text/plain").send("Invalid Twilio signature");
+    }
+
+    const incomingText = String(body.Body || "").trim();
+    const from = normalizeTwilioAddress(body.From);
+    const messageSid = String(body.MessageSid || "").trim() || null;
+
+    if (!from) {
+      return res.status(200).type("text/xml").send(buildMessagingTwiml(""));
+    }
+
+    const ref = db.collection("whatsappContacts").doc(whatsappContactDocId(from));
+    const snapshot = await ref.get();
+    const existing = snapshot.exists ? (snapshot.data() || {}) : {};
+    const name = isString(existing.name) ? existing.name.trim() : "";
+    const openAiResponseId = isString(existing.openAiResponseId) ?
+      existing.openAiResponseId.trim() : "";
+    const whatsappMode = isString(existing.whatsappMode) ?
+      existing.whatsappMode.trim().toLowerCase() : TWILIO_WHATSAPP_MODE;
+    const starterMessage = isString(existing.starterMessage) ?
+      existing.starterMessage.trim() :
+      (isSandboxWhatsappMode() ?
+        `join ${TWILIO_WHATSAPP_SANDBOX_KEYWORD}` :
+        TWILIO_WHATSAPP_INITIAL_MESSAGE);
+    const now = admin.firestore.FieldValue.serverTimestamp();
+
+    await ref.set({
+      phoneNumber: from,
+      name: name || null,
+      latestChannel: "whatsapp",
+      source: existing.source || "whatsapp",
+      createdAt: snapshot.exists ? existing.createdAt || now : now,
+      updatedAt: now,
+      lastInboundAt: now,
+      lastInboundBody: incomingText || null,
+      lastInboundMessageSid: messageSid,
+      whatsappMode: whatsappMode,
+      starterMessage: starterMessage || null,
+    }, {merge: true});
+
+    if (!incomingText) {
+      return res.status(200).type("text/xml").send(buildMessagingTwiml(""));
+    }
+
+    const joinCommand = `join ${TWILIO_WHATSAPP_SANDBOX_KEYWORD}`.trim().toLowerCase();
+    const lowerIncomingText = incomingText.toLowerCase();
+    const isJoinMessage =
+      whatsappMode !== "live" && lowerIncomingText === joinCommand;
+    const isLiveStarterMessage =
+      whatsappMode === "live" &&
+      !openAiResponseId &&
+      starterMessage &&
+      lowerIncomingText === starterMessage.toLowerCase();
+
+    if (isJoinMessage || isLiveStarterMessage) {
+      const welcome = name ?
+        `Hi ${name}, you're connected to Felicity on WhatsApp. ` +
+          "Tell me about your bladder symptoms and what matters most to you, " +
+          "and I'll guide you step by step." :
+        "You're connected to Felicity on WhatsApp. Tell me about your bladder " +
+          "symptoms and what matters most to you, and I'll guide you step by step.";
+
+      await ref.set({
+        sandboxJoinedAt: now,
+        lastOutboundAt: now,
+        lastOutboundBody: welcome,
+      }, {merge: true});
+
+      return res.status(200).type("text/xml").send(buildMessagingTwiml(welcome));
+    }
+
+    const sessionId = `whatsapp-${whatsappContactDocId(from)}`;
+    const prompt = buildWhatsappPrompt({
+      contactName: name,
+      userMessage: incomingText,
+      hasExistingThread: !!openAiResponseId,
+    });
+
+    const chatResult = await postToChatApi({
+      prompt: prompt,
+      threadId: openAiResponseId || "",
+      sessionId: sessionId,
+    });
+
+    const reply = formatReplyForWhatsapp(chatResult.reply ||
+      "I'm sorry, but I hit a technical problem just now. Please try again.");
+    const nextThreadId = isString(chatResult.threadId) ? chatResult.threadId.trim() : "";
+
+    await ref.set({
+      openAiResponseId: nextThreadId || openAiResponseId || null,
+      lastOutboundAt: now,
+      lastOutboundBody: reply,
+      updatedAt: now,
+    }, {merge: true});
+
+    return res.status(200).type("text/xml").send(buildMessagingTwiml(reply));
+  } catch (err) {
+    const msg = (err && err.message) ? err.message : String(err);
+    console.error("twilioWhatsappWebhook error:", msg);
+    const fallback =
+      "I'm sorry, but there was a technical problem reaching Felicity just now. " +
+      "Please try sending your message again in a moment.";
+    return res.status(200).type("text/xml").send(buildMessagingTwiml(fallback));
+  }
 });

@@ -1,6 +1,8 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import Image from "next/image";
 import ReactMarkdown from "react-markdown";
+import QRCode from "qrcode";
 import { ensureAnonIdToken } from "@/lib/firebase";
 
 const THREAD_KEY = "oab_thread_id";
@@ -9,6 +11,20 @@ const LAST_ACTIVITY_KEY = "oab_last_activity";
 const THREAD_IDLE_MS = 45 * 60 * 1000; // 45 minutes: start a fresh thread after inactivity
 
 type Message = { role: "user" | "assistant"; content: string };
+
+const WHATSAPP_NAME_KEY = "oab_whatsapp_name";
+const WHATSAPP_PHONE_KEY = "oab_whatsapp_phone";
+const WHATSAPP_CONTACT_FUNCTION_URL =
+  process.env.NEXT_PUBLIC_WHATSAPP_CONTACT_FUNCTION_URL || "";
+const TWILIO_WHATSAPP_NUMBER =
+  process.env.NEXT_PUBLIC_TWILIO_WHATSAPP_NUMBER || "+14155238886";
+const TWILIO_WHATSAPP_MODE =
+  (process.env.NEXT_PUBLIC_TWILIO_WHATSAPP_MODE || "sandbox").toLowerCase();
+const TWILIO_WHATSAPP_SANDBOX_KEYWORD =
+  process.env.NEXT_PUBLIC_TWILIO_WHATSAPP_SANDBOX_KEYWORD || "plan-simple";
+const TWILIO_WHATSAPP_INITIAL_MESSAGE =
+  process.env.NEXT_PUBLIC_TWILIO_WHATSAPP_INITIAL_MESSAGE ||
+  "Hi Felicity, let's get started";
 
 function ensureChatSessionId(): string {
   if (typeof window === "undefined") {
@@ -24,6 +40,74 @@ function ensureChatSessionId(): string {
       : `session-${Date.now()}`;
   localStorage.setItem(CHAT_SESSION_KEY, nextId);
   return nextId;
+}
+
+function normalizeUkPhoneNumber(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+
+  const hasPlus = trimmed.startsWith("+");
+  const digits = trimmed.replace(/\D/g, "");
+
+  if (!digits) return "";
+  if (hasPlus && digits.startsWith("44")) return `+${digits}`;
+  if (digits.startsWith("44")) return `+${digits}`;
+  if (digits.startsWith("07") && digits.length === 11) {
+    return `+44${digits.slice(1)}`;
+  }
+  if (digits.startsWith("7") && digits.length === 10) {
+    return `+44${digits}`;
+  }
+  if (digits.startsWith("0") && digits.length >= 10) {
+    return `+44${digits.slice(1)}`;
+  }
+
+  return hasPlus ? `+${digits}` : digits;
+}
+
+function looksLikeUkWhatsAppNumber(value: string): boolean {
+  return /^\+447\d{9}$/.test(value);
+}
+
+function isSandboxWhatsappMode() {
+  return TWILIO_WHATSAPP_MODE !== "live";
+}
+
+function getWhatsAppStarterMessage() {
+  return isSandboxWhatsappMode()
+    ? `join ${TWILIO_WHATSAPP_SANDBOX_KEYWORD}`
+    : TWILIO_WHATSAPP_INITIAL_MESSAGE;
+}
+
+function buildWhatsAppLaunchUrl() {
+  const digits = TWILIO_WHATSAPP_NUMBER.replace(/\D/g, "");
+  const message = getWhatsAppStarterMessage();
+  return `https://wa.me/${digits}?text=${encodeURIComponent(message)}`;
+}
+
+async function saveWhatsAppBootstrapContact(payload: {
+  name: string;
+  phoneNumber: string;
+}) {
+  if (!WHATSAPP_CONTACT_FUNCTION_URL) return;
+
+  const res = await fetch(WHATSAPP_CONTACT_FUNCTION_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      name: payload.name,
+      phoneNumber: payload.phoneNumber,
+      source: "website",
+      whatsappMode: TWILIO_WHATSAPP_MODE,
+      starterMessage: getWhatsAppStarterMessage(),
+    }),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Bootstrap save failed with status ${res.status}`);
+  }
 }
 
 const HOW_FELICITY_ACCORDION_ITEMS: Array<{ title: string; points: string[] }> = [
@@ -171,6 +255,7 @@ function IntroFelicitySection() {
               {"→ See how Felicity works"}
             </a>
           </div>
+          <WhatsAppContactCard />
           <p
             className="mt-24 text-center text-3xl md:text-4xl text-[#faf5d9]/88"
             style={{ fontFamily: "var(--font-display)" }}
@@ -180,6 +265,262 @@ function IntroFelicitySection() {
         </div>
       </div>
     </section>
+  );
+}
+
+function WhatsAppContactCard() {
+  const [name, setName] = useState("");
+  const [phoneInput, setPhoneInput] = useState("");
+  const [normalizedPhone, setNormalizedPhone] = useState("");
+  const [error, setError] = useState("");
+  const [saved, setSaved] = useState(false);
+  const [statusText, setStatusText] = useState("");
+  const [isStarting, setIsStarting] = useState(false);
+  const [showQr, setShowQr] = useState(false);
+  const [qrCodeDataUrl, setQrCodeDataUrl] = useState("");
+
+  const launchUrl = buildWhatsAppLaunchUrl();
+  const starterMessage = getWhatsAppStarterMessage();
+  const isSandboxMode = isSandboxWhatsappMode();
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const storedName = localStorage.getItem(WHATSAPP_NAME_KEY) || "";
+    const storedPhone = localStorage.getItem(WHATSAPP_PHONE_KEY) || "";
+    setName(storedName);
+    setPhoneInput(storedPhone);
+    setNormalizedPhone(storedPhone);
+    setSaved(Boolean(storedName.trim() && looksLikeUkWhatsAppNumber(storedPhone)));
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    QRCode.toDataURL(launchUrl, {
+      width: 320,
+      margin: 1,
+      color: {
+        dark: "#071333",
+        light: "#F7FBFF",
+      },
+    })
+      .then((url: string) => {
+        if (active) setQrCodeDataUrl(url);
+      })
+      .catch(() => {
+        if (active) setQrCodeDataUrl("");
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [launchUrl]);
+
+  async function handleSave(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const trimmedName = name.trim();
+    const nextPhone = normalizeUkPhoneNumber(phoneInput);
+
+    if (!trimmedName) {
+      setError("Please enter your name.");
+      setSaved(false);
+      return;
+    }
+
+    if (!looksLikeUkWhatsAppNumber(nextPhone)) {
+      setError("Please enter a UK mobile number. We’ll convert 07 numbers to +44 automatically.");
+      setSaved(false);
+      return;
+    }
+
+    setError("");
+    setName(trimmedName);
+    setNormalizedPhone(nextPhone);
+    setPhoneInput(nextPhone);
+    setIsStarting(true);
+    setStatusText("");
+
+    if (typeof window !== "undefined") {
+      localStorage.setItem(WHATSAPP_NAME_KEY, trimmedName);
+      localStorage.setItem(WHATSAPP_PHONE_KEY, nextPhone);
+    }
+    setShowQr(true);
+
+    try {
+      await saveWhatsAppBootstrapContact({
+        name: trimmedName,
+        phoneNumber: nextPhone,
+      });
+      setSaved(true);
+      setStatusText(
+        "Contact details saved. Ask the patient to scan the QR code with their own phone, then press send in WhatsApp."
+      );
+    } catch {
+      setSaved(true);
+      setStatusText(
+        "Details saved on this device. The QR code is ready, but the backend contact sync is not configured yet."
+      );
+    } finally {
+      setIsStarting(false);
+    }
+  }
+
+  function handlePhoneBlur() {
+    const nextPhone = normalizeUkPhoneNumber(phoneInput);
+    if (!nextPhone) return;
+    setPhoneInput(nextPhone);
+    setNormalizedPhone(nextPhone);
+  }
+
+  return (
+    <div
+      className="mt-10 w-full rounded-3xl border border-white/20 bg-white/[0.09] backdrop-blur-xl shadow-[0_18px_45px_rgba(0,0,0,0.4)] p-6 md:p-8 text-left"
+      style={{ fontFamily: "var(--font-display)" }}
+    >
+      <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+        <div>
+          <p className="text-[28px] md:text-4xl text-[#faf5d9] leading-tight">
+            Talk to Felicity by WhatsApp
+          </p>
+          <p className="mt-3 max-w-2xl text-[16px] md:text-[18px] text-[#faf5d9]/80 leading-relaxed">
+            Enter your details below. We&apos;ll default to UK numbers and convert standard mobile
+            entries like <span className="font-semibold text-[#faf5d9]">07...</span> into{" "}
+            <span className="font-semibold text-[#8ad4ff]">+44</span> automatically.{" "}
+            {isSandboxMode
+              ? "Because this sender is still on the Twilio sandbox, the patient’s first WhatsApp message will be the sandbox join command."
+              : "The QR code will open the live WhatsApp sender with Felicity’s opening message prefilled so the patient only needs to press send."}
+          </p>
+        </div>
+        <div className="inline-flex w-fit items-center rounded-full border border-[#8ad4ff]/35 bg-[#09162e]/55 px-3 py-1 text-[12px] uppercase tracking-[0.18em] text-[#8ad4ff]/90">
+          UK default
+        </div>
+      </div>
+
+      <form onSubmit={handleSave} className="mt-6 grid gap-4 md:grid-cols-2">
+        <label className="block">
+          <span className="mb-2 block text-[14px] md:text-[15px] font-semibold uppercase tracking-[0.12em] text-[#faf5d9]/75">
+            Name
+          </span>
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => {
+              setName(e.target.value);
+              if (error) setError("");
+              if (statusText) setStatusText("");
+              if (saved) setSaved(false);
+            }}
+            className="min-h-[52px] w-full rounded-2xl border border-white/15 bg-[linear-gradient(145deg,rgba(255,255,255,0.98)_0%,rgba(243,247,252,0.94)_100%)] px-4 py-3 text-[#02052e] shadow-[inset_0_1px_0_rgba(255,255,255,0.88),inset_0_-1px_0_rgba(125,141,165,0.2),0_10px_24px_rgba(0,0,0,0.18)] outline-none transition focus:border-[#8ad4ff] focus:ring-2 focus:ring-[#8ad4ff]/30"
+            placeholder="Jane"
+            autoComplete="name"
+          />
+        </label>
+
+        <label className="block">
+          <span className="mb-2 block text-[14px] md:text-[15px] font-semibold uppercase tracking-[0.12em] text-[#faf5d9]/75">
+            Phone number
+          </span>
+          <input
+            type="tel"
+            inputMode="tel"
+            value={phoneInput}
+            onChange={(e) => {
+              setPhoneInput(e.target.value);
+              if (error) setError("");
+              if (statusText) setStatusText("");
+              if (saved) setSaved(false);
+            }}
+            onBlur={handlePhoneBlur}
+            className="min-h-[52px] w-full rounded-2xl border border-white/15 bg-[linear-gradient(145deg,rgba(255,255,255,0.98)_0%,rgba(243,247,252,0.94)_100%)] px-4 py-3 text-[#02052e] shadow-[inset_0_1px_0_rgba(255,255,255,0.88),inset_0_-1px_0_rgba(125,141,165,0.2),0_10px_24px_rgba(0,0,0,0.18)] outline-none transition focus:border-[#8ad4ff] focus:ring-2 focus:ring-[#8ad4ff]/30"
+            placeholder="07123 456789"
+            autoComplete="tel"
+          />
+        </label>
+
+        <div className="md:col-span-2 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="min-h-[24px] text-[14px] md:text-[15px] leading-relaxed">
+            {error ? (
+              <p className="text-[#ffcbc8]">{error}</p>
+            ) : statusText ? (
+              <p className="text-[#bfe9ff]">{statusText}</p>
+            ) : normalizedPhone ? (
+              <p className="text-[#faf5d9]/80">
+                Stored in WhatsApp-ready format:{" "}
+                <span className="font-semibold text-[#8ad4ff]">{normalizedPhone}</span>
+              </p>
+            ) : (
+              <p className="text-[#faf5d9]/62">
+                Example: 07123 456789 will be saved as +447123456789, then WhatsApp will open with
+                <span className="font-semibold text-[#8ad4ff]"> {starterMessage}</span>.
+              </p>
+            )}
+          </div>
+
+          <button
+            type="submit"
+            disabled={isStarting}
+            className="inline-flex min-h-[48px] items-center justify-center rounded-2xl border border-[#2d4370]/88 bg-[linear-gradient(152deg,rgba(2,6,43,0.98)_0%,rgba(4,16,61,0.96)_52%,rgba(7,31,88,0.96)_100%)] px-5 py-3 text-[15px] font-semibold text-white shadow-[inset_0_1px_0_rgba(156,180,228,0.24),inset_0_-1px_0_rgba(1,4,18,0.5),0_10px_24px_rgba(0,0,0,0.28)] transition hover:brightness-105 focus:outline-none focus:ring-2 focus:ring-[#8ad4ff]/40"
+          >
+            {isStarting
+              ? "Preparing QR code..."
+              : saved
+                ? "QR code ready"
+                : "Start conversation"}
+          </button>
+        </div>
+      </form>
+
+      {showQr ? (
+        <div className="mt-8 rounded-[28px] border border-[#8ad4ff]/18 bg-[linear-gradient(180deg,rgba(5,12,34,0.88)_0%,rgba(8,19,48,0.72)_100%)] p-5 md:p-6 shadow-[0_18px_50px_rgba(0,0,0,0.28)]">
+          <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+            <div className="max-w-xl">
+              <p className="text-[24px] md:text-[30px] leading-tight text-[#faf5d9]">
+                Scan on the patient&apos;s phone
+              </p>
+              <p className="mt-3 text-[15px] md:text-[17px] leading-relaxed text-[#faf5d9]/78">
+                This QR code opens WhatsApp on the patient&apos;s own device with the required
+                starting message prefilled. They only need to scan it, open WhatsApp, and press
+                <span className="font-semibold text-[#faf5d9]"> Send</span>.
+              </p>
+              <div className="mt-5 grid gap-2 text-[14px] md:text-[15px] text-[#d8ecff]">
+                <p>1. Open the patient&apos;s camera and scan the QR code.</p>
+                <p>2. Tap the WhatsApp link that appears.</p>
+                <p>3. Send <span className="font-semibold text-[#8ad4ff]">{starterMessage}</span>.</p>
+              </div>
+              <a
+                href={launchUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-5 inline-flex min-h-[44px] items-center justify-center rounded-2xl border border-white/12 bg-white/[0.08] px-4 py-2 text-[14px] font-semibold text-[#faf5d9] transition hover:bg-white/[0.12] focus:outline-none focus:ring-2 focus:ring-[#8ad4ff]/35"
+              >
+                Open on this device instead
+              </a>
+            </div>
+
+            <div className="mx-auto flex w-full max-w-[320px] flex-col items-center rounded-[32px] border border-white/10 bg-[linear-gradient(160deg,rgba(255,255,255,0.98)_0%,rgba(243,248,255,0.95)_100%)] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_18px_40px_rgba(0,0,0,0.18)]">
+              {qrCodeDataUrl ? (
+                <Image
+                  src={qrCodeDataUrl}
+                  alt="QR code to open WhatsApp and send the sandbox join message"
+                  width={288}
+                  height={288}
+                  unoptimized
+                  className="h-auto w-full rounded-[24px]"
+                />
+              ) : (
+                <div className="flex min-h-[288px] w-full items-center justify-center rounded-[24px] bg-[#eef5ff] text-center text-[14px] text-[#38517b]">
+                  Preparing QR code...
+                </div>
+              )}
+              <p className="mt-3 text-center text-[13px] leading-relaxed text-[#38517b]">
+                WhatsApp opens to <span className="font-semibold">{TWILIO_WHATSAPP_NUMBER}</span> with
+                <span className="font-semibold"> {starterMessage}</span>.
+              </p>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
