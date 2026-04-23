@@ -1355,123 +1355,123 @@ function InfoTabs() {
         {/* Useful Information and Links (static) */}
         <div className="mt-8 md:mt-10 flex justify-center">
           <div
-            className="info-panel-luxe w-full md:w-2/3 rounded-xl p-6 text-slate-800"
+            className="info-panel-luxe min-w-0 w-full md:w-2/3 rounded-xl p-6 text-slate-800"
             style={{ fontFamily: "var(--font-display)" }}
           >
             <h3 className="text-[22px] md:text-[24px] font-semibold mb-4 text-center underline underline-offset-4 decoration-[1.5px]">
               Useful Information &amp; Links
             </h3>
-            <div className="space-y-5 text-[18px] md:text-[19px]">
-              <div className="space-y-1">
-                <p className="font-semibold whitespace-nowrap">Urinary incontinence</p>
+            <div className="min-w-0 space-y-5 text-[18px] md:text-[19px]">
+              <div className="min-w-0 space-y-1">
+                <p className="font-semibold whitespace-normal break-words [overflow-wrap:anywhere]">Urinary incontinence</p>
                 <a
                   href="https://www.baus.org.uk/patients/conditions/5/incontinence_of_urine"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="block underline underline-offset-2 break-words hover:opacity-80"
+                  className="block min-w-0 underline underline-offset-2 break-words [overflow-wrap:anywhere] hover:opacity-80"
                 >
                   baus.org.uk/patients/conditions/5/incontinence_of_urine
                 </a>
               </div>
-              <div className="space-y-1">
-                <p className="font-semibold whitespace-nowrap">Bladder training</p>
+              <div className="min-w-0 space-y-1">
+                <p className="font-semibold whitespace-normal break-words [overflow-wrap:anywhere]">Bladder training</p>
                 <a
                   href="https://www.baus.org.uk/_userfiles/pages/files/Patients/Leaflets/Bladder%20training.pdf"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="block underline underline-offset-2 break-words hover:opacity-80"
+                  className="block min-w-0 underline underline-offset-2 break-words [overflow-wrap:anywhere] hover:opacity-80"
                 >
                   Bladder training (PDF) — BAUS
                 </a>
               </div>
-              <div className="space-y-1">
-                <p className="font-semibold whitespace-nowrap">Input/output chart</p>
+              <div className="min-w-0 space-y-1">
+                <p className="font-semibold whitespace-normal break-words [overflow-wrap:anywhere]">Input/output chart</p>
                 <a
                   href="https://www.baus.org.uk/_userfiles/pages/files/patients/leaflets/Input%20output%20chart.pdf"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="block underline underline-offset-2 break-words hover:opacity-80"
+                  className="block min-w-0 underline underline-offset-2 break-words [overflow-wrap:anywhere] hover:opacity-80"
                 >
                   Input/output chart (PDF) — BAUS
                 </a>
               </div>
-              <div className="space-y-1">
-                <p className="font-semibold whitespace-nowrap">Pelvic floor exercises (men)</p>
+              <div className="min-w-0 space-y-1">
+                <p className="font-semibold whitespace-normal break-words [overflow-wrap:anywhere]">Pelvic floor exercises (men)</p>
                 <a
                   href="https://www.baus.org.uk/_userfiles/pages/files/Patients/Leaflets/Pelvic%20floor%20XS%20male.pdf"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="block underline underline-offset-2 break-words hover:opacity-80"
+                  className="block min-w-0 underline underline-offset-2 break-words [overflow-wrap:anywhere] hover:opacity-80"
                 >
                   Pelvic floor exercises — BAUS (PDF)
                 </a>
               </div>
-              <div className="space-y-1">
-                <p className="font-semibold whitespace-nowrap">Pelvic floor exercises (women)</p>
+              <div className="min-w-0 space-y-1">
+                <p className="font-semibold whitespace-normal break-words [overflow-wrap:anywhere]">Pelvic floor exercises (women)</p>
                 <a
                   href="https://www.baus.org.uk/_userfiles/pages/files/Patients/Leaflets/Pelvic%20floor%20XS%20female.pdf"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="block underline underline-offset-2 break-words hover:opacity-80"
+                  className="block min-w-0 underline underline-offset-2 break-words [overflow-wrap:anywhere] hover:opacity-80"
                 >
                   Pelvic floor exercises — BAUS (PDF)
                 </a>
               </div>
-              <div className="space-y-1">
-                <p className="font-semibold whitespace-nowrap">OAB treatment options</p>
+              <div className="min-w-0 space-y-1">
+                <p className="font-semibold whitespace-normal break-words [overflow-wrap:anywhere]">OAB treatment options</p>
                 <a
                   href="https://www.baus.org.uk/_userfiles/pages/files/Patients/Leaflets/OAB%20options.pdf"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="block underline underline-offset-2 break-words hover:opacity-80"
+                  className="block min-w-0 underline underline-offset-2 break-words [overflow-wrap:anywhere] hover:opacity-80"
                 >
                   Treatment options for overactive bladder — BAUS (PDF)
                 </a>
               </div>
-              <div className="space-y-1">
-                <p className="font-semibold whitespace-nowrap">What are botox injections?</p>
+              <div className="min-w-0 space-y-1">
+                <p className="font-semibold whitespace-normal break-words [overflow-wrap:anywhere]">What are botox injections?</p>
                 <a
                   href="https://www.baus.org.uk/_userfiles/pages/files/Patients/Leaflets/Botox.pdf"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="block underline underline-offset-2 break-words hover:opacity-80"
+                  className="block min-w-0 underline underline-offset-2 break-words [overflow-wrap:anywhere] hover:opacity-80"
                 >
                   Botox injections — BAUS (PDF)
                 </a>
               </div>
-              <div className="space-y-1">
-                <p className="font-semibold whitespace-nowrap">
+              <div className="min-w-0 space-y-1">
+                <p className="font-semibold whitespace-normal break-words [overflow-wrap:anywhere]">
                   What is Posterior Tibial Nerve Stimulation (PTNS)
                 </p>
                 <a
                   href="https://bsug.org.uk/budcms/includes/kcfinder/upload/files/info-leaflets/PTNS%20BSUG%20July%202017.pdf"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="block underline underline-offset-2 break-words hover:opacity-80"
+                  className="block min-w-0 underline underline-offset-2 break-words [overflow-wrap:anywhere] hover:opacity-80"
                 >
                   Posterior Tibial Nerve Stimulation — BSUG (PDF)
                 </a>
               </div>
-              <div className="space-y-1">
-                <p className="font-semibold whitespace-nowrap">What is sacral nerve stimulation (SNS)</p>
+              <div className="min-w-0 space-y-1">
+                <p className="font-semibold whitespace-normal break-words [overflow-wrap:anywhere]">What is sacral nerve stimulation (SNS)</p>
                 <a
                   href="https://www.baus.org.uk/_userfiles/pages/files/Patients/Leaflets/Sacral%20neuromodulation.pdf"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="block underline underline-offset-2 break-words hover:opacity-80"
+                  className="block min-w-0 underline underline-offset-2 break-words [overflow-wrap:anywhere] hover:opacity-80"
                 >
                   Sacral nerve stimulation — BAUS (PDF)
                 </a>
               </div>
-              <div className="space-y-1">
-                <p className="font-semibold whitespace-nowrap">
+              <div className="min-w-0 space-y-1">
+                <p className="font-semibold whitespace-normal break-words [overflow-wrap:anywhere]">
                   Surgery for overactive bladder - enterocystoplasty
                 </p>
                 <a
                   href="https://www.baus.org.uk/_userfiles/pages/files/patients/leaflets/Enterocystoplasty.pdf"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="block underline underline-offset-2 break-words hover:opacity-80"
+                  className="block min-w-0 underline underline-offset-2 break-words [overflow-wrap:anywhere] hover:opacity-80"
                 >
                   Enterocystoplasty (bladder enlargement surgery) — BAUS (PDF)
                 </a>
