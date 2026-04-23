@@ -2,6 +2,7 @@
 /* eslint-disable max-len, require-jsdoc, no-console */
 
 const { onRequest } = require("firebase-functions/v2/https");
+const { onDocumentCreated } = require("firebase-functions/v2/firestore");
 const { setGlobalOptions } = require("firebase-functions/v2");
 const admin = require("firebase-admin");
 const twilio = require("twilio");
@@ -22,9 +23,12 @@ const TWILIO_WHATSAPP_INITIAL_MESSAGE =
   "Hi Felicity, let's get started";
 const TWILIO_VALIDATE_SIGNATURE =
   (process.env.TWILIO_VALIDATE_SIGNATURE || "true").toLowerCase() !== "false";
+const TWILIO_WHATSAPP_NUMBER =
+  process.env.TWILIO_WHATSAPP_NUMBER || "+441182300299";
 const CHAT_API_URL =
   process.env.CHAT_API_URL || "https://oab-gpt.vercel.app/api/chat";
 const WHATSAPP_REPLY_CHUNK_SIZE = 1200;
+const WHATSAPP_OUTBOUND_DELAY_MS = 700;
 const cors = corsMW({ origin: ALLOWED_ORIGIN, credentials: true });
 
 // Init Admin
@@ -245,6 +249,64 @@ async function postToChatApi(payload) {
   }
 
   return response.json();
+}
+
+function getTwilioClient() {
+  const accountSid = process.env.TWILIO_ACCOUNT_SID || "";
+  const authToken = process.env.TWILIO_AUTH_TOKEN || "";
+
+  if (!accountSid || !authToken) {
+    throw new Error("Missing TWILIO_ACCOUNT_SID or TWILIO_AUTH_TOKEN");
+  }
+
+  return twilio(accountSid, authToken);
+}
+
+async function sendWhatsappMessages(to, text) {
+  const client = getTwilioClient();
+  const parts = splitWhatsappReply(text);
+  const from = `whatsapp:${TWILIO_WHATSAPP_NUMBER}`;
+  const recipient = `whatsapp:${to}`;
+  const sent = [];
+
+  for (const part of parts) {
+    const message = await client.messages.create({
+      from: from,
+      to: recipient,
+      body: part,
+    });
+    sent.push(message.sid);
+    if (parts.length > 1) {
+      await new Promise((resolve) => setTimeout(resolve, WHATSAPP_OUTBOUND_DELAY_MS));
+    }
+  }
+
+  return sent;
+}
+
+async function enqueueWhatsappInboundMessage(payload) {
+  const fallbackId = `${whatsappContactDocId(payload.from)}-${Date.now()}`;
+  const jobId = payload.messageSid || fallbackId;
+  const ref = db.collection("whatsappInboundQueue").doc(jobId);
+
+  try {
+    await ref.create({
+      ...payload,
+      status: "queued",
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  } catch (err) {
+    if (err && (err.code === 6 || err.code === "already-exists")) {
+      await ref.set({
+        duplicateReceivedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, {merge: true});
+      return jobId;
+    }
+    throw err;
+  }
+
+  return jobId;
 }
 
 // Width-aware word-wrap; also breaks long tokens so lines never overflow
@@ -761,30 +823,24 @@ exports.twilioWhatsappWebhook = onRequest(async (req, res) => {
     }
 
     const sessionId = `whatsapp-${whatsappContactDocId(from)}`;
-    const prompt = buildWhatsappPrompt({
-      contactName: name,
-      userMessage: incomingText,
-      hasExistingThread: !!openAiResponseId,
-    });
-
-    const chatResult = await postToChatApi({
-      prompt: prompt,
-      threadId: openAiResponseId || "",
+    await enqueueWhatsappInboundMessage({
+      from: from,
+      contactId: whatsappContactDocId(from),
+      name: name || null,
+      incomingText: incomingText,
+      messageSid: messageSid,
+      openAiResponseId: openAiResponseId || null,
+      whatsappMode: whatsappMode,
+      starterMessage: starterMessage || null,
       sessionId: sessionId,
     });
 
-    const reply = formatReplyForWhatsapp(chatResult.reply ||
-      "I'm sorry, but I hit a technical problem just now. Please try again.");
-    const nextThreadId = isString(chatResult.threadId) ? chatResult.threadId.trim() : "";
-
     await ref.set({
-      openAiResponseId: nextThreadId || openAiResponseId || null,
-      lastOutboundAt: now,
-      lastOutboundBody: reply,
+      lastQueuedAt: now,
       updatedAt: now,
     }, {merge: true});
 
-    return res.status(200).type("text/xml").send(buildMessagingTwiml(reply));
+    return res.status(200).type("text/xml").send(buildMessagingTwiml(""));
   } catch (err) {
     const msg = (err && err.message) ? err.message : String(err);
     console.error("twilioWhatsappWebhook error:", msg);
@@ -794,3 +850,113 @@ exports.twilioWhatsappWebhook = onRequest(async (req, res) => {
     return res.status(200).type("text/xml").send(buildMessagingTwiml(fallback));
   }
 });
+
+exports.processWhatsappInboundMessage = onDocumentCreated(
+  "whatsappInboundQueue/{messageId}",
+  async (event) => {
+    const snapshot = event.data;
+    if (!snapshot) return;
+
+    const job = snapshot.data() || {};
+    const from = String(job.from || "").trim();
+    const contactId = String(job.contactId || whatsappContactDocId(from)).trim();
+    const incomingText = String(job.incomingText || "").trim();
+    const name = isString(job.name) ? String(job.name).trim() : "";
+    const sessionId = isString(job.sessionId) ?
+      String(job.sessionId).trim() :
+      `whatsapp-${contactId}`;
+    const messageSid = isString(job.messageSid) ? String(job.messageSid).trim() : null;
+    const jobRef = snapshot.ref;
+    const contactRef = db.collection("whatsappContacts").doc(contactId);
+    const now = admin.firestore.FieldValue.serverTimestamp();
+
+    if (!from || !incomingText) {
+      await jobRef.set({
+        status: "skipped",
+        error: "Missing from or incomingText",
+        updatedAt: now,
+      }, {merge: true});
+      return;
+    }
+
+    await jobRef.set({
+      status: "processing",
+      processingStartedAt: now,
+      updatedAt: now,
+    }, {merge: true});
+
+    try {
+      const contactSnapshot = await contactRef.get();
+      const contact = contactSnapshot.exists ? (contactSnapshot.data() || {}) : {};
+      const openAiResponseId = isString(contact.openAiResponseId) ?
+        String(contact.openAiResponseId).trim() :
+        (isString(job.openAiResponseId) ? String(job.openAiResponseId).trim() : "");
+      const contactName = isString(contact.name) ? String(contact.name).trim() : name;
+      const prompt = buildWhatsappPrompt({
+        contactName: contactName,
+        userMessage: incomingText,
+        hasExistingThread: !!openAiResponseId,
+      });
+
+      const chatResult = await postToChatApi({
+        prompt: prompt,
+        threadId: openAiResponseId || "",
+        sessionId: sessionId,
+      });
+
+      const reply = formatReplyForWhatsapp(chatResult.reply ||
+        "I'm sorry, but I hit a technical problem just now. Please try again.");
+      const nextThreadId = isString(chatResult.threadId) ?
+        String(chatResult.threadId).trim() :
+        "";
+      const sentMessageSids = await sendWhatsappMessages(from, reply);
+
+      await contactRef.set({
+        openAiResponseId: nextThreadId || openAiResponseId || null,
+        lastOutboundAt: now,
+        lastOutboundBody: reply,
+        lastOutboundMessageSids: sentMessageSids,
+        updatedAt: now,
+      }, {merge: true});
+
+      await jobRef.set({
+        status: "sent",
+        completedAt: now,
+        updatedAt: now,
+        reply: reply,
+        openAiResponseId: nextThreadId || openAiResponseId || null,
+        sentMessageSids: sentMessageSids,
+      }, {merge: true});
+    } catch (err) {
+      const msg = (err && err.message) ? err.message : String(err);
+      console.error("processWhatsappInboundMessage error:", msg);
+      const fallback =
+        "I'm sorry, but there was a technical problem reaching Felicity just now. " +
+        "Please try sending your message again in a moment.";
+
+      try {
+        const sentMessageSids = await sendWhatsappMessages(from, fallback);
+        await contactRef.set({
+          lastOutboundAt: now,
+          lastOutboundBody: fallback,
+          lastOutboundMessageSids: sentMessageSids,
+          lastOutboundError: msg,
+          updatedAt: now,
+        }, {merge: true});
+      } catch (sendErr) {
+        console.error(
+          "processWhatsappInboundMessage fallback send error:",
+          sendErr && sendErr.message ? sendErr.message : String(sendErr)
+        );
+      }
+
+      await jobRef.set({
+        status: "error",
+        error: msg,
+        failedAt: now,
+        updatedAt: now,
+        messageSid: messageSid,
+      }, {merge: true});
+    }
+  }
+);
