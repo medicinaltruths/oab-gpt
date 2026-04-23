@@ -24,6 +24,7 @@ const TWILIO_VALIDATE_SIGNATURE =
   (process.env.TWILIO_VALIDATE_SIGNATURE || "true").toLowerCase() !== "false";
 const CHAT_API_URL =
   process.env.CHAT_API_URL || "https://oab-gpt.vercel.app/api/chat";
+const WHATSAPP_REPLY_CHUNK_SIZE = 1200;
 const cors = corsMW({ origin: ALLOWED_ORIGIN, credentials: true });
 
 // Init Admin
@@ -127,35 +128,88 @@ function isValidTwilioRequest(req, params) {
   );
 }
 
-function escapeXml(text) {
-  return String(text || "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
-}
-
 function buildMessagingTwiml(text) {
-  const body = String(text || "").trim();
-  if (!body) {
-    return "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response></Response>";
+  const response = new twilio.twiml.MessagingResponse();
+  const parts = splitWhatsappReply(text);
+
+  for (const part of parts) {
+    response.message(part);
   }
 
-  return (
-    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>" +
-    "<Response><Message>" +
-    escapeXml(body) +
-    "</Message></Response>"
-  );
+  return response.toString();
 }
 
 function formatReplyForWhatsapp(text) {
   return String(text || "")
     .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, "$1: $2")
-    .replace(/[*_`]/g, "")
+    .replace(/^#{1,6}\s*/gm, "")
+    .replace(/^\s*[-*•]\s+/gm, "- ")
+    .replace(/^\s*\d+\.\s+/gm, (m) => m.trim())
+    .replace(/\*\*(.*?)\*\*/g, "$1")
+    .replace(/\*(.*?)\*/g, "$1")
+    .replace(/__(.*?)__/g, "$1")
+    .replace(/_(.*?)_/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+function splitLongWhatsappParagraph(paragraph, maxLength) {
+  const parts = [];
+  let remaining = String(paragraph || "").trim();
+
+  while (remaining.length > maxLength) {
+    let splitAt = remaining.lastIndexOf("\n", maxLength);
+    if (splitAt < Math.floor(maxLength * 0.5)) {
+      splitAt = remaining.lastIndexOf(". ", maxLength);
+    }
+    if (splitAt < Math.floor(maxLength * 0.5)) {
+      splitAt = remaining.lastIndexOf("; ", maxLength);
+    }
+    if (splitAt < Math.floor(maxLength * 0.5)) {
+      splitAt = remaining.lastIndexOf(", ", maxLength);
+    }
+    if (splitAt < Math.floor(maxLength * 0.5)) {
+      splitAt = remaining.lastIndexOf(" ", maxLength);
+    }
+    if (splitAt <= 0) {
+      splitAt = maxLength;
+    }
+
+    const chunk = remaining.slice(0, splitAt).trim();
+    if (chunk) parts.push(chunk);
+    remaining = remaining.slice(splitAt).trim();
+  }
+
+  if (remaining) parts.push(remaining);
+  return parts;
+}
+
+function splitWhatsappReply(text) {
+  const cleaned = formatReplyForWhatsapp(text);
+  if (!cleaned) return [];
+  if (cleaned.length <= WHATSAPP_REPLY_CHUNK_SIZE) return [cleaned];
+
+  const paragraphs = cleaned.split(/\n{2,}/).map((part) => part.trim()).filter(Boolean);
+  const chunks = [];
+  let current = "";
+
+  for (const paragraph of paragraphs) {
+    const paragraphParts = splitLongWhatsappParagraph(paragraph, WHATSAPP_REPLY_CHUNK_SIZE);
+
+    for (const part of paragraphParts) {
+      const candidate = current ? `${current}\n\n${part}` : part;
+      if (candidate.length <= WHATSAPP_REPLY_CHUNK_SIZE) {
+        current = candidate;
+      } else {
+        if (current) chunks.push(current);
+        current = part;
+      }
+    }
+  }
+
+  if (current) chunks.push(current);
+  return chunks;
 }
 
 function buildWhatsappPrompt(options) {
@@ -164,8 +218,10 @@ function buildWhatsappPrompt(options) {
   const hasExistingThread = !!options.hasExistingThread;
 
   const prefix =
-    "Context: the user is messaging via WhatsApp. Reply in plain text suitable " +
-    "for WhatsApp, concise, warm, and easy to read. Avoid markdown tables.";
+    "Context: the user is messaging via WhatsApp. Reply in plain text only, " +
+    "suitable for WhatsApp, concise, warm, and easy to read. Avoid markdown, " +
+    "avoid emojis, avoid markdown tables, and keep the reply under 900 characters " +
+    "unless the user explicitly asks for more detail.";
   const nameLine =
     !hasExistingThread && contactName
       ? `The user's preferred name from signup is ${contactName}.`
