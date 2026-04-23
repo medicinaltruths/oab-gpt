@@ -145,6 +145,10 @@ function buildMessagingTwiml(text) {
 
 function formatReplyForWhatsapp(text) {
   return String(text || "")
+    .replace(/【[^】]*filecite[^】]*】/gi, "")
+    .replace(/\[\s*filecite[^\]]*\]/gi, "")
+    .replace(/\bfilecite\s+(?:turn\d+file\d+\s*)+/gi, "")
+    .replace(/\bturn\d+file\d+\b/gi, "")
     .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, "$1: $2")
     .replace(/^#{1,6}\s*/gm, "")
     .replace(/^\s*[-*•]\s+/gm, "- ")
@@ -154,6 +158,8 @@ function formatReplyForWhatsapp(text) {
     .replace(/__(.*?)__/g, "$1")
     .replace(/_(.*?)_/g, "$1")
     .replace(/`([^`]+)`/g, "$1")
+    .replace(/[【】[\]]/g, "")
+    .replace(/[ \t]{2,}/g, " ")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
