@@ -955,6 +955,7 @@ function ChatPane() {
 }
 
 function ChatSection() {
+  const [chatOpen, setChatOpen] = useState(false);
   const [howOpen, setHowOpen] = useState(false);
   const [openItems, setOpenItems] = useState<Record<number, boolean>>({
     0: false,
@@ -980,6 +981,10 @@ function ChatSection() {
     setHowOpen((prev) => !prev);
   }
 
+  function toggleChat() {
+    setChatOpen((prev) => !prev);
+  }
+
   function toggleInner(index: number) {
     setOpenItems((prev) => ({
       ...prev,
@@ -1002,8 +1007,39 @@ function ChatSection() {
         className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_43%_36%,rgba(185,168,246,0.26)_0%,rgba(126,110,185,0.2)_26%,rgba(56,45,90,0.14)_44%,rgba(0,0,0,0.17)_66%,rgba(0,0,0,0.39)_100%),radial-gradient(circle_at_71%_68%,rgba(76,222,236,0.27)_0%,rgba(31,132,148,0.21)_28%,rgba(14,74,83,0.14)_46%,rgba(0,0,0,0.17)_68%,rgba(0,0,0,0.41)_100%)] blur-3xl"
       />
       <div className="relative z-10 max-w-7xl mx-auto px-6 md:px-10">
-        <div id="chat-window" className="w-full lg:w-[85.714%] mx-auto">
-          <ChatPane />
+        <div
+          id="chat-window"
+          className="relative overflow-hidden w-full lg:w-[85.714%] mx-auto rounded-3xl border border-white/18 bg-black/55 backdrop-blur-xl p-6 md:p-8"
+          style={{ fontFamily: "var(--font-display)" }}
+        >
+          <div aria-hidden="true" className="pointer-events-none absolute inset-0 bg-black/40" />
+          <div className="relative z-10">
+            <button
+              id="chat-window-toggle"
+              type="button"
+              onClick={toggleChat}
+              className="w-full px-1 py-1 text-left flex items-center justify-between"
+              aria-expanded={chatOpen}
+              aria-controls="chat-window-panel"
+            >
+              <span className="text-3xl md:text-4xl font-semibold text-[#faf5d9]">
+                Talk to Felicity online here
+              </span>
+              <span
+                className={`text-[#faf5d9]/70 text-4xl leading-none transition-transform duration-200 ${
+                  chatOpen ? "rotate-45" : ""
+                }`}
+              >
+                +
+              </span>
+            </button>
+
+            {chatOpen && (
+              <div id="chat-window-panel" className="min-h-0 pt-6">
+                <ChatPane />
+              </div>
+            )}
+          </div>
         </div>
 
         <div
