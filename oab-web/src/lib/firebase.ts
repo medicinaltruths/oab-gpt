@@ -6,6 +6,7 @@ import {
   onAuthStateChanged,
   type User,
 } from "firebase/auth";
+import { getFirestore } from "firebase/firestore";
 import { getDownloadURL, getStorage, ref } from "firebase/storage";
 
 // These must be present in .env.local as NEXT_PUBLIC_FIREBASE_*
@@ -21,6 +22,14 @@ let app: FirebaseApp;
 export function getClientApp() {
   if (!app) app = getApps()[0] ?? initializeApp(firebaseConfig);
   return app;
+}
+
+export function getClientAuth() {
+  return getAuth(getClientApp());
+}
+
+export function getClientDb() {
+  return getFirestore(getClientApp());
 }
 
 /** Silently ensure an anonymous user, then return their uid */
