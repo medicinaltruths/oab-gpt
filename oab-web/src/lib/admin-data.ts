@@ -2,11 +2,15 @@
 
 import {
   collection,
+  collectionGroup,
   doc,
   getDoc,
   onSnapshot,
+  query,
   serverTimestamp,
+  setDoc,
   updateDoc,
+  where,
   type DocumentData,
   type QuerySnapshot,
   type Unsubscribe,
@@ -14,14 +18,14 @@ import {
 import { getClientDb } from "@/lib/firebase";
 import type {
   AnalyticsSnapshot,
-  ClinicalReview,
+  AssessmentClinicianReview,
   ClinicianAccount,
-  Concordance,
-  Conversation,
+  DataSourceAuditRow,
   FirestoreDate,
-  FollowUpSurvey,
   FunnelDatum,
-  PatientReport,
+  PatientAssessment,
+  PostClinicQuestionnaire,
+  PreClinicQuestionnaire,
   RecommendationDatum,
   TrendDatum,
 } from "@/types/admin";
@@ -30,23 +34,19 @@ const RECOMMENDATION_COLORS: Record<string, string> = {
   PTNS: "#55d8e6",
   Botox: "#8da2fb",
   SNM: "#c7a6ff",
-  Conservative: "#7dd3a8",
-  Surgery: "#e8bc78",
   Medication: "#f08aa8",
+  Conservative: "#7dd3a8",
   Other: "#8190a8",
 };
 
-const FUNNEL_STAGES = [
-  ["Chat Started", "chat_started"],
-  ["Symptom Assessment Completed", "symptom_assessment"],
-  ["Impact Assessment Completed", "impact_assessment"],
-  ["Treatment History Completed", "treatment_history"],
-  ["Recommendation Reached", "recommendation"],
-  ["PDF Generated", "pdf_generated"],
-] as const;
-
-function mapSnapshot<T extends { id: string }>(snapshot: QuerySnapshot<DocumentData>): T[] {
+function mapSnapshot<T extends { id?: string }>(snapshot: QuerySnapshot<DocumentData>): T[] {
   return snapshot.docs.map((item) => ({ id: item.id, ...item.data() }) as T);
+}
+
+function writableFields<T extends { id?: string }>(value: T): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(value).filter(([key, item]) => key !== "id" && item !== undefined),
+  );
 }
 
 export function toDate(value: FirestoreDate): Date | null {
@@ -68,38 +68,12 @@ export function formatDate(value: FirestoreDate, includeTime = false): string {
   }).format(date);
 }
 
-export function formatDuration(seconds = 0): string {
-  if (!seconds || seconds < 1) return "0m";
-  const minutes = Math.floor(seconds / 60);
-  const remaining = Math.round(seconds % 60);
-  if (minutes < 1) return `${remaining}s`;
-  return remaining ? `${minutes}m ${remaining}s` : `${minutes}m`;
-}
-
-export function getPatientName(conversation: Conversation): string {
-  return (
-    conversation.patientName ||
-    conversation.patient?.name ||
-    conversation.patientInitials ||
-    conversation.patient?.initials ||
-    "Anonymous patient"
-  );
-}
-
-export function getPatientAge(conversation: Conversation): number | null {
-  if (typeof conversation.age === "number") return conversation.age;
-  if (typeof conversation.patient?.age === "number") return conversation.patient.age;
-  const dob = toDate(conversation.dateOfBirth || conversation.patient?.dateOfBirth);
-  if (!dob) return null;
-  const now = new Date();
-  let age = now.getFullYear() - dob.getFullYear();
-  const month = now.getMonth() - dob.getMonth();
-  if (month < 0 || (month === 0 && now.getDate() < dob.getDate())) age -= 1;
-  return age;
-}
-
-export function getAiRecommendation(conversation: Conversation): string {
-  return conversation.aiRecommendation || conversation.recommendation?.type || "Not recorded";
+export function formatDurationMinutes(minutes = 0): string {
+  if (!minutes) return "0m";
+  if (minutes < 60) return `${Math.round(minutes)}m`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = Math.round(minutes % 60);
+  return `${hours}h ${remainder}m`;
 }
 
 export function normalizeRecommendation(value?: string): string {
@@ -107,6 +81,7 @@ export function normalizeRecommendation(value?: string): string {
   if (normalized.includes("ptns") || normalized.includes("tibial")) return "PTNS";
   if (normalized.includes("botox") || normalized.includes("botulinum")) return "Botox";
   if (normalized.includes("snm") || normalized.includes("sacral")) return "SNM";
+  if (normalized.includes("medication") || normalized.includes("medicine")) return "Medication";
   if (
     normalized.includes("conservative") ||
     normalized.includes("bladder training") ||
@@ -114,39 +89,12 @@ export function normalizeRecommendation(value?: string): string {
   ) {
     return "Conservative";
   }
-  if (
-    normalized.includes("turp") ||
-    normalized.includes("holep") ||
-    normalized.includes("surgery") ||
-    normalized.includes("surgical")
-  ) {
-    return "Surgery";
-  }
-  if (normalized.includes("medication") || normalized.includes("medicine")) return "Medication";
   return value?.trim() || "Other";
 }
 
-export function calculateConcordance(aiRecommendation?: string, clinicianRecommendation?: string): Concordance {
-  if (!aiRecommendation || !clinicianRecommendation) return "Not reviewed";
-  const ai = normalizeRecommendation(aiRecommendation);
-  const clinician = normalizeRecommendation(clinicianRecommendation);
-  if (ai === clinician) return "Match";
-
-  const conservative = new Set(["Conservative", "Medication"]);
-  const procedures = new Set(["PTNS", "Botox", "SNM"]);
-  if (
-    (conservative.has(ai) && conservative.has(clinician)) ||
-    (procedures.has(ai) && procedures.has(clinician))
-  ) {
-    return "Partial Match";
-  }
-  return "Different";
-}
-
 async function findClinicianAccount(email: string): Promise<ClinicianAccount | null> {
-  const db = getClientDb();
   const normalized = email.trim().toLowerCase();
-  const snapshot = await getDoc(doc(db, "clinician_accounts", normalized));
+  const snapshot = await getDoc(doc(getClientDb(), "clinician_accounts", normalized));
   if (!snapshot.exists()) return null;
   const account = { id: snapshot.id, ...snapshot.data() } as ClinicianAccount;
   if (account.email.trim().toLowerCase() !== normalized) return null;
@@ -157,86 +105,174 @@ export async function verifyClinicianEmail(email: string): Promise<ClinicianAcco
   return findClinicianAccount(email);
 }
 
-function filterForAccount<T extends { hospitalId?: string }>(
-  records: T[],
-  account?: ClinicianAccount | null,
-): T[] {
-  if (!account || account.role === "super_admin") return records;
-  const allowed = new Set([account.hospitalId, ...(account.hospitalIds || [])].filter(Boolean));
-  if (!allowed.size) return records;
-  return records.filter((record) => !record.hospitalId || allowed.has(record.hospitalId));
+function hospitalIdsForAccount(account: ClinicianAccount): string[] {
+  return [...new Set([account.hospitalId, ...(account.hospitalIds || [])].filter(Boolean) as string[])];
 }
 
-export function subscribeConversations(
+export function subscribeAssessments(
   account: ClinicianAccount,
-  callback: (records: Conversation[]) => void,
+  callback: (records: PatientAssessment[]) => void,
   onError?: (error: Error) => void,
 ): Unsubscribe {
+  const hospitals = hospitalIdsForAccount(account);
+  const base = collection(getClientDb(), "patient_assessments");
+  const assessmentQuery =
+    account.role === "super_admin"
+      ? base
+      : hospitals.length === 1
+        ? query(base, where("hospitalId", "==", hospitals[0]))
+        : hospitals.length > 1
+          ? query(base, where("hospitalId", "in", hospitals.slice(0, 10)))
+          : query(base, where("hospitalId", "==", "__no_hospital_access__"));
   return onSnapshot(
-    collection(getClientDb(), "conversations"),
-    (snapshot) => callback(filterForAccount(mapSnapshot<Conversation>(snapshot), account)),
+    assessmentQuery,
+    (snapshot) => callback(mapSnapshot<PatientAssessment>(snapshot)),
     onError,
   );
 }
 
-export function subscribeConversation(
-  id: string,
-  callback: (record: Conversation | null) => void,
-  onError?: (error: Error) => void,
-): Unsubscribe {
-  return onSnapshot(
-    doc(getClientDb(), "conversations", id),
-    (snapshot) => callback(snapshot.exists() ? ({ id: snapshot.id, ...snapshot.data() } as Conversation) : null),
-    onError,
-  );
-}
-
-export function subscribeReports(
+export function subscribePreClinicQuestionnaires(
   account: ClinicianAccount,
-  callback: (records: PatientReport[]) => void,
+  callback: (records: PreClinicQuestionnaire[]) => void,
   onError?: (error: Error) => void,
 ): Unsubscribe {
+  const hospitals = hospitalIdsForAccount(account);
+  const base = collectionGroup(getClientDb(), "preClinicQuestionnaire");
+  const questionnaireQuery =
+    account.role === "super_admin"
+      ? base
+      : hospitals.length === 1
+        ? query(base, where("hospitalId", "==", hospitals[0]))
+        : hospitals.length > 1
+          ? query(base, where("hospitalId", "in", hospitals.slice(0, 10)))
+          : query(base, where("hospitalId", "==", "__no_hospital_access__"));
   return onSnapshot(
-    collection(getClientDb(), "patient_reports"),
-    (snapshot) => callback(filterForAccount(mapSnapshot<PatientReport>(snapshot), account)),
+    questionnaireQuery,
+    (snapshot) => callback(mapSnapshot<PreClinicQuestionnaire>(snapshot)),
     onError,
   );
 }
 
-export function subscribeSurveys(
+export function subscribeClinicianReviews(
   account: ClinicianAccount,
-  callback: (records: FollowUpSurvey[]) => void,
+  callback: (records: AssessmentClinicianReview[]) => void,
   onError?: (error: Error) => void,
 ): Unsubscribe {
+  const hospitals = hospitalIdsForAccount(account);
+  const base = collectionGroup(getClientDb(), "clinicianReview");
+  const reviewQuery =
+    account.role === "super_admin"
+      ? base
+      : hospitals.length === 1
+        ? query(base, where("hospitalId", "==", hospitals[0]))
+        : hospitals.length > 1
+          ? query(base, where("hospitalId", "in", hospitals.slice(0, 10)))
+          : query(base, where("hospitalId", "==", "__no_hospital_access__"));
   return onSnapshot(
-    collection(getClientDb(), "follow_up_surveys"),
-    (snapshot) => callback(filterForAccount(mapSnapshot<FollowUpSurvey>(snapshot), account)),
+    reviewQuery,
+    (snapshot) => callback(mapSnapshot<AssessmentClinicianReview>(snapshot)),
     onError,
   );
 }
 
-export async function saveClinicalReview(
-  conversationId: string,
-  review: ClinicalReview,
-  clinician: ClinicianAccount,
-  aiRecommendation: string,
+export function subscribeAssessmentSubcollection<T extends { id?: string }>(
+  assessmentId: string,
+  subcollection: "preClinicQuestionnaire" | "postClinicQuestionnaire" | "clinicianReview",
+  callback: (record: T | null) => void,
+  onError?: (error: Error) => void,
+): Unsubscribe {
+  return onSnapshot(
+    doc(getClientDb(), "patient_assessments", assessmentId, subcollection, "latest"),
+    (snapshot) =>
+      callback(snapshot.exists() ? ({ id: snapshot.id, ...snapshot.data() } as T) : null),
+    onError,
+  );
+}
+
+export async function savePreClinicQuestionnaire(
+  assessment: PatientAssessment,
+  questionnaire: PreClinicQuestionnaire,
 ): Promise<void> {
-  await updateDoc(doc(getClientDb(), "conversations", conversationId), {
-    clinicalReview: {
-      ...review,
-      concordance: calculateConcordance(aiRecommendation, review.finalRecommendation),
-      reviewedBy: clinician.displayName || clinician.email,
-      reviewedByEmail: clinician.email,
-      reviewedAt: review.reviewedAt || serverTimestamp(),
+  await setDoc(
+    doc(
+      getClientDb(),
+      "patient_assessments",
+      assessment.assessmentId,
+      "preClinicQuestionnaire",
+      "latest",
+    ),
+    {
+      ...writableFields(questionnaire),
+      assessmentId: assessment.assessmentId,
+      hospitalId: assessment.hospitalId,
+      questionnaireDate: questionnaire.questionnaireDate || serverTimestamp(),
       updatedAt: serverTimestamp(),
     },
+    { merge: true },
+  );
+}
+
+export async function savePostClinicQuestionnaire(
+  assessment: PatientAssessment,
+  questionnaire: PostClinicQuestionnaire,
+): Promise<void> {
+  await setDoc(
+    doc(
+      getClientDb(),
+      "patient_assessments",
+      assessment.assessmentId,
+      "postClinicQuestionnaire",
+      "latest",
+    ),
+    {
+      ...writableFields(questionnaire),
+      assessmentId: assessment.assessmentId,
+      hospitalId: assessment.hospitalId,
+      questionnaireDate: questionnaire.questionnaireDate || serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    },
+    { merge: true },
+  );
+}
+
+export async function saveAssessmentClinicianReview(
+  assessment: PatientAssessment,
+  review: AssessmentClinicianReview,
+  clinician: ClinicianAccount,
+): Promise<void> {
+  const reviewRef = doc(
+    getClientDb(),
+    "patient_assessments",
+    assessment.assessmentId,
+    "clinicianReview",
+    "latest",
+  );
+  await setDoc(
+    reviewRef,
+    {
+      ...writableFields(review),
+      assessmentId: assessment.assessmentId,
+      hospitalId: assessment.hospitalId,
+      aiTreatment: assessment.recommendedTreatment || "",
+      concordance:
+        normalizeRecommendation(review.clinicianTreatment) ===
+        normalizeRecommendation(assessment.recommendedTreatment),
+      reviewedBy: clinician.displayName || clinician.email,
+      reviewedByEmail: clinician.email,
+      reviewDate: review.reviewDate || serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    },
+    { merge: true },
+  );
+  await updateDoc(doc(getClientDb(), "patient_assessments", assessment.assessmentId), {
+    reviewStatus: "reviewed",
     updatedAt: serverTimestamp(),
   });
 }
 
 function average(values: Array<number | undefined>): number {
-  const valid = values.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
-  return valid.length ? valid.reduce((total, value) => total + value, 0) / valid.length : 0;
+  const valid = values.filter((value): value is number => typeof value === "number");
+  return valid.length ? valid.reduce((sum, value) => sum + value, 0) / valid.length : 0;
 }
 
 function isSameDay(left: Date | null, right: Date): boolean {
@@ -248,34 +284,25 @@ function isSameDay(left: Date | null, right: Date): boolean {
   );
 }
 
-function hasStage(conversation: Conversation, stage: string): boolean {
-  const stages = conversation.completedStages || [];
-  if (stage === "chat_started") return Boolean(conversation.startedAt || conversation.createdAt);
-  if (stage === "recommendation") return Boolean(getAiRecommendation(conversation) !== "Not recorded");
-  if (stage === "pdf_generated") return Boolean(
-    conversation.reportGenerated || conversation.reportUrl || conversation.pdfUrl,
-  );
-  if (conversation.status === "completed") return true;
-  return stages.some((item) => item.toLowerCase().replace(/\s+/g, "_").includes(stage));
-}
-
-function buildRecommendationDistribution(conversations: Conversation[]): RecommendationDatum[] {
-  const labels = ["PTNS", "Botox", "SNM", "Conservative", "Surgery"];
-  return labels.map((label) => ({
+function buildRecommendationDistribution(assessments: PatientAssessment[]): RecommendationDatum[] {
+  return ["PTNS", "Botox", "SNM", "Medication", "Conservative"].map((label) => ({
     label,
-    value: conversations.filter((item) => normalizeRecommendation(getAiRecommendation(item)) === label).length,
+    value: assessments.filter(
+      (assessment) => normalizeRecommendation(assessment.recommendedTreatment) === label,
+    ).length,
     color: RECOMMENDATION_COLORS[label],
   }));
 }
 
-function buildFunnel(conversations: Conversation[]): FunnelDatum[] {
-  return FUNNEL_STAGES.map(([label, stage]) => ({
-    label,
-    value: conversations.filter((item) => hasStage(item, stage)).length,
-  }));
+function buildFunnel(assessments: PatientAssessment[]): FunnelDatum[] {
+  return [
+    { label: "Started", value: assessments.filter((item) => item.conversationStarted).length },
+    { label: "Completed", value: assessments.filter((item) => item.conversationCompleted).length },
+    { label: "Generated PDF", value: assessments.filter((item) => item.reportGenerated).length },
+  ];
 }
 
-function buildWeeklyTrend(conversations: Conversation[]): TrendDatum[] {
+function buildWeeklyTrend(assessments: PatientAssessment[]): TrendDatum[] {
   const formatter = new Intl.DateTimeFormat("en-GB", { weekday: "short" });
   return Array.from({ length: 7 }, (_, index) => {
     const day = new Date();
@@ -283,94 +310,99 @@ function buildWeeklyTrend(conversations: Conversation[]): TrendDatum[] {
     day.setDate(day.getDate() - (6 - index));
     return {
       label: formatter.format(day),
-      value: conversations.filter((item) => isSameDay(toDate(item.startedAt || item.createdAt), day)).length,
+      value: assessments.filter((item) => isSameDay(toDate(item.createdAt), day)).length,
     };
   });
 }
 
-function buildConcordance(conversations: Conversation[]): AnalyticsSnapshot["concordance"] {
+function buildConcordance(
+  assessments: PatientAssessment[],
+  reviews: AssessmentClinicianReview[],
+): AnalyticsSnapshot["concordance"] {
+  const assessmentMap = new Map(assessments.map((item) => [item.assessmentId, item]));
   const groups = new Map<string, AnalyticsSnapshot["concordance"][number]>();
-  conversations.forEach((conversation) => {
-    const clinician = conversation.clinicalReview?.finalRecommendation;
-    if (!clinician) return;
-    const ai = normalizeRecommendation(getAiRecommendation(conversation));
-    const clinicianNormalized = normalizeRecommendation(clinician);
-    const concordance = calculateConcordance(ai, clinicianNormalized);
-    const key = `${ai}|${clinicianNormalized}|${concordance}`;
+  reviews.forEach((review) => {
+    const assessment = review.assessmentId ? assessmentMap.get(review.assessmentId) : undefined;
+    const ai = normalizeRecommendation(review.aiTreatment || assessment?.recommendedTreatment);
+    const clinician = normalizeRecommendation(review.clinicianTreatment);
+    if (!review.clinicianTreatment) return;
+    const concordance = ai === clinician;
+    const key = `${ai}|${clinician}|${concordance}`;
     const existing = groups.get(key);
     groups.set(key, {
       aiRecommendation: ai,
-      clinicianRecommendation: clinicianNormalized,
+      clinicianRecommendation: clinician,
       concordance,
       count: (existing?.count || 0) + 1,
     });
   });
-  return [...groups.values()].sort((a, b) => b.count - a.count);
+  return [...groups.values()].sort((left, right) => right.count - left.count);
 }
 
 export function buildAnalytics(
-  conversations: Conversation[],
-  reports: PatientReport[] = [],
-  surveys: FollowUpSurvey[] = [],
+  assessments: PatientAssessment[],
+  questionnaires: PreClinicQuestionnaire[] = [],
+  reviews: AssessmentClinicianReview[] = [],
 ): AnalyticsSnapshot {
-  const today = new Date();
-  const startedToday = conversations.filter((item) =>
-    isSameDay(toDate(item.startedAt || item.createdAt), today),
-  ).length;
-  const completed = conversations.filter((item) => item.status === "completed" || item.completedAt);
-  const completedToday = completed.filter((item) => isSameDay(toDate(item.completedAt), today)).length;
-  const reportConversationIds = new Set(reports.map((report) => report.conversationId).filter(Boolean));
-  const conversationsWithReports = conversations.filter(
-    (item) => item.reportGenerated || item.reportUrl || item.pdfUrl || reportConversationIds.has(item.id),
-  );
-  const unlinkedConversationReports = conversationsWithReports.filter(
-    (item) => !reportConversationIds.has(item.id),
-  ).length;
-  const reportsGenerated = reports.length + unlinkedConversationReports;
-  const allPreparedness = [
-    ...conversations.map((item) => item.preparednessScore),
-    ...surveys.map((item) => item.preparednessScore),
-  ];
-  const allUnderstanding = [
-    ...conversations.map((item) => item.understandingScore),
-    ...surveys.map((item) => item.understandingScore),
-  ];
-  const allSatisfaction = [
-    ...conversations.map((item) => item.satisfactionScore),
-    ...surveys.map((item) => item.satisfactionScore),
-  ];
-  const funnel = buildFunnel(conversations);
-  const dropOff = funnel.slice(0, -1).map((stage, index) => ({
-    label: stage.label,
-    value: Math.max(0, stage.value - funnel[index + 1].value),
-  }));
-
+  const started = assessments.filter((item) => item.conversationStarted);
+  const completed = assessments.filter((item) => item.conversationCompleted);
+  const reports = assessments.filter((item) => item.reportGenerated);
+  const funnel = buildFunnel(assessments);
   return {
     metrics: {
-      conversationsStartedToday: startedToday,
-      conversationsCompletedToday: completedToday,
-      completionRate: conversations.length ? (completed.length / conversations.length) * 100 : 0,
-      reportsGenerated,
-      averageDurationSeconds: average(conversations.map((item) => item.durationSeconds)),
-      averagePreparednessScore: average(allPreparedness),
-      averageUnderstandingScore: average(allUnderstanding),
-      averageSatisfactionScore: average(allSatisfaction),
+      conversationsStarted: started.length,
+      conversationsCompleted: completed.length,
+      completionRate: started.length ? (completed.length / started.length) * 100 : 0,
+      reportsGenerated: reports.length,
+      averageDurationMinutes: average(assessments.map((item) => item.conversationDurationMinutes)),
+      averagePreparednessScore: average(questionnaires.map((item) => item.preparedness)),
+      averageUnderstandingScore: average(questionnaires.map((item) => item.understanding)),
+      averageSatisfactionScore: average(
+        questionnaires.map((item) => item.recommendationSatisfaction),
+      ),
     },
-    recommendationDistribution: buildRecommendationDistribution(conversations),
+    recommendationDistribution: buildRecommendationDistribution(assessments),
     funnel,
-    weeklyTrend: buildWeeklyTrend(conversations),
-    pdfGenerationRate: completed.length
-      ? (conversationsWithReports.length / completed.length) * 100
-      : 0,
-    averageMessages: average(conversations.map((item) => item.messageCount || item.transcript?.length)),
-    dropOff,
-    concordance: buildConcordance(conversations),
+    weeklyTrend: buildWeeklyTrend(assessments),
+    pdfGenerationRate: completed.length ? (reports.length / completed.length) * 100 : 0,
+    averageMessages: average(assessments.map((item) => item.messageCount)),
+    dropOff: [
+      { label: "Started but not completed", value: Math.max(0, started.length - completed.length) },
+      { label: "Completed without PDF", value: Math.max(0, completed.length - reports.length) },
+    ],
+    concordance: buildConcordance(assessments, reviews),
+    pendingReviews: assessments.filter((item) => item.reviewStatus !== "reviewed").length,
+    reviewedAssessments: assessments.filter((item) => item.reviewStatus === "reviewed").length,
   };
 }
 
-export function deriveConcordance(
-  aiRecommendation: string,
-  review: Pick<ClinicalReview, "finalRecommendation">,
-): Concordance {
-  return calculateConcordance(aiRecommendation, review.finalRecommendation);
+export function subscribeAuditCollection(
+  collectionName: string,
+  account: ClinicianAccount,
+  callback: (row: Pick<DataSourceAuditRow, "documentCount" | "lastUpdated">) => void,
+  onError?: (error: Error) => void,
+): Unsubscribe {
+  const hospitals = hospitalIdsForAccount(account);
+  const base = collection(getClientDb(), collectionName);
+  const auditQuery =
+    account.role === "super_admin"
+      ? base
+      : hospitals.length === 1
+        ? query(base, where("hospitalId", "==", hospitals[0]))
+        : hospitals.length > 1
+          ? query(base, where("hospitalId", "in", hospitals.slice(0, 10)))
+          : query(base, where("hospitalId", "==", "__no_hospital_access__"));
+  return onSnapshot(
+    auditQuery,
+    (snapshot) => {
+      const dates = snapshot.docs
+        .map((item) => toDate(item.get("updatedAt") || item.get("createdAt")))
+        .filter((date): date is Date => Boolean(date));
+      callback({
+        documentCount: snapshot.size,
+        lastUpdated: dates.sort((left, right) => right.getTime() - left.getTime())[0],
+      });
+    },
+    onError,
+  );
 }

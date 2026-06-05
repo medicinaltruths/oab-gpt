@@ -11,39 +11,82 @@ service cloud.firestore {
     }
 
     function isClinician() {
-      return signedIn() && (
-        exists(/databases/$(database)/documents/clinician_accounts/$(emailLower())) ||
-        exists(/databases/$(database)/documents/clinician_accounts/$(request.auth.uid))
+      return signedIn() &&
+        exists(/databases/$(database)/documents/clinician_accounts/$(emailLower())) &&
+        (
+          !("active" in clinicianAccount()) ||
+          clinicianAccount().active == true
+        );
+    }
+
+    function clinicianAccount() {
+      return get(/databases/$(database)/documents/clinician_accounts/$(emailLower())).data;
+    }
+
+    function canAccessHospital(hospitalId) {
+      return isClinician() && (
+        clinicianAccount().role == "super_admin" ||
+        clinicianAccount().hospitalId == hospitalId ||
+        (
+          "hospitalIds" in clinicianAccount() &&
+          clinicianAccount().hospitalIds is list &&
+          hospitalId in clinicianAccount().hospitalIds
+        )
       );
     }
 
     match /clinician_accounts/{accountId} {
-      allow get, list: if signedIn() &&
-        (accountId == emailLower() || accountId == request.auth.uid || resource.data.email == request.auth.token.email);
+      allow read: if
+        (
+          signedIn() &&
+          accountId == emailLower() &&
+          resource.data.email == request.auth.token.email
+        ) ||
+        (
+          isClinician() &&
+          canAccessHospital(resource.data.hospitalId)
+        );
       allow write: if false;
     }
 
-    match /conversations/{conversationId} {
-      allow read, update: if isClinician();
-      allow create: if request.auth != null;
+    match /patient_assessments/{assessmentId} {
+      allow create: if request.auth != null &&
+        request.resource.data.ownerUid == request.auth.uid &&
+        request.resource.data.assessmentId == assessmentId &&
+        request.resource.data.hospitalId is string;
+      allow read: if canAccessHospital(resource.data.hospitalId);
+      allow update: if
+        canAccessHospital(resource.data.hospitalId) ||
+        (
+          request.auth != null &&
+          resource.data.ownerUid == request.auth.uid &&
+          request.resource.data.ownerUid == resource.data.ownerUid &&
+          request.resource.data.hospitalId == resource.data.hospitalId &&
+          request.resource.data.assessmentId == resource.data.assessmentId
+        );
       allow delete: if false;
+
+      match /{subcollection}/{documentId} {
+        allow read: if
+          resource.data.hospitalId ==
+            get(/databases/$(database)/documents/patient_assessments/$(assessmentId)).data.hospitalId &&
+          canAccessHospital(resource.data.hospitalId);
+        allow create, update: if
+          request.resource.data.hospitalId ==
+            get(/databases/$(database)/documents/patient_assessments/$(assessmentId)).data.hospitalId &&
+          canAccessHospital(request.resource.data.hospitalId);
+        allow delete: if false;
+      }
     }
 
-    match /analytics/{document=**} {
-      allow read: if isClinician();
+    match /whatsappContacts/{documentId} {
+      allow read: if canAccessHospital(resource.data.hospitalId);
       allow write: if false;
     }
 
-    match /patient_reports/{reportId} {
-      allow read: if isClinician();
-      allow write: if request.auth != null;
-    }
-
-    match /follow_up_surveys/{surveyId} {
-      allow read: if isClinician();
-      allow create: if request.auth != null;
-      allow update: if isClinician();
-      allow delete: if false;
+    match /whatsappInboundQueue/{documentId} {
+      allow read: if canAccessHospital(resource.data.hospitalId);
+      allow write: if false;
     }
   }
 }

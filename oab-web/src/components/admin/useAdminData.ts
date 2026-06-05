@@ -4,69 +4,84 @@ import { useEffect, useMemo, useState } from "react";
 import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
 import {
   buildAnalytics,
-  subscribeConversations,
-  subscribeReports,
-  subscribeSurveys,
+  subscribeAssessments,
+  subscribeClinicianReviews,
+  subscribePreClinicQuestionnaires,
 } from "@/lib/admin-data";
-import type { Conversation, FollowUpSurvey, PatientReport } from "@/types/admin";
+import type {
+  AssessmentClinicianReview,
+  PatientAssessment,
+  PreClinicQuestionnaire,
+} from "@/types/admin";
 
 export function useAdminData() {
   const { clinician } = useAdminAuth();
-  const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [reports, setReports] = useState<PatientReport[]>([]);
-  const [surveys, setSurveys] = useState<FollowUpSurvey[]>([]);
+  const [assessments, setAssessments] = useState<PatientAssessment[]>([]);
+  const [preClinicQuestionnaires, setPreClinicQuestionnaires] = useState<
+    PreClinicQuestionnaire[]
+  >([]);
+  const [clinicianReviews, setClinicianReviews] = useState<
+    AssessmentClinicianReview[]
+  >([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    let conversationsReady = false;
-    let reportsReady = false;
-    let surveysReady = false;
+    let assessmentsReady = false;
+    let questionnairesReady = false;
+    let reviewsReady = false;
     const updateLoading = () => {
-      if (conversationsReady && reportsReady && surveysReady) setLoading(false);
+      if (assessmentsReady && questionnairesReady && reviewsReady) setLoading(false);
     };
     const handleError = (nextError: Error) => {
-      setError(nextError.message || "Unable to load clinical data.");
+      setError(nextError.message || "Unable to load assessment data.");
       setLoading(false);
     };
-    const unsubscribeConversations = subscribeConversations(
+    const unsubscribeAssessments = subscribeAssessments(
       clinician,
       (records) => {
-        setConversations(records);
-        conversationsReady = true;
+        setAssessments(records);
+        assessmentsReady = true;
         updateLoading();
       },
       handleError,
     );
-    const unsubscribeReports = subscribeReports(
+    const unsubscribeQuestionnaires = subscribePreClinicQuestionnaires(
       clinician,
       (records) => {
-        setReports(records);
-        reportsReady = true;
+        setPreClinicQuestionnaires(records);
+        questionnairesReady = true;
         updateLoading();
       },
       handleError,
     );
-    const unsubscribeSurveys = subscribeSurveys(
+    const unsubscribeReviews = subscribeClinicianReviews(
       clinician,
       (records) => {
-        setSurveys(records);
-        surveysReady = true;
+        setClinicianReviews(records);
+        reviewsReady = true;
         updateLoading();
       },
       handleError,
     );
     return () => {
-      unsubscribeConversations();
-      unsubscribeReports();
-      unsubscribeSurveys();
+      unsubscribeAssessments();
+      unsubscribeQuestionnaires();
+      unsubscribeReviews();
     };
   }, [clinician]);
 
   const analytics = useMemo(
-    () => buildAnalytics(conversations, reports, surveys),
-    [conversations, reports, surveys],
+    () => buildAnalytics(assessments, preClinicQuestionnaires, clinicianReviews),
+    [assessments, clinicianReviews, preClinicQuestionnaires],
   );
 
-  return { conversations, reports, surveys, analytics, loading, error };
+  return {
+    assessments,
+    preClinicQuestionnaires,
+    clinicianReviews,
+    analytics,
+    loading,
+    error,
+  };
 }

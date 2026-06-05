@@ -1,17 +1,8 @@
 import type { Timestamp } from "firebase/firestore";
 
 export type FirestoreDate = Timestamp | Date | string | number | null | undefined;
-
-export type RecommendationType =
-  | "PTNS"
-  | "Botox"
-  | "SNM"
-  | "Conservative"
-  | "Surgery"
-  | "Medication"
-  | "Other";
-
-export type Concordance = "Match" | "Partial Match" | "Different" | "Not reviewed";
+export type ReviewStatus = "pending" | "reviewed";
+export type QuestionnaireScore = 1 | 2 | 3 | 4 | 5;
 
 export interface ClinicianAccount {
   id: string;
@@ -24,118 +15,93 @@ export interface ClinicianAccount {
   active?: boolean;
 }
 
-export interface InvestigationFindings {
-  urodynamics?: string;
-  qmax?: number | null;
-  voidedVolume?: number | null;
-  pvr?: number | null;
-  prostateSize?: number | null;
-  otherFindings?: string;
-}
-
-export interface ClinicalReview {
-  diagnosis?: string;
-  diagnosisOther?: string;
-  investigations?: InvestigationFindings;
-  finalRecommendation?: string;
-  finalRecommendationOther?: string;
-  rationale?: string;
-  concordance?: Concordance;
-  discordanceReason?: string;
-  discordanceNotes?: string;
-  patientAcceptedRecommendation?: "Yes" | "No" | "Unsure" | "";
-  followUpOutcome?: "Symptoms improved" | "Symptoms unchanged" | "Symptoms worse" | "";
-  reviewedBy?: string;
-  reviewedByEmail?: string;
-  reviewedAt?: FirestoreDate;
-  updatedAt?: FirestoreDate;
-}
-
-export interface ConversationMessage {
-  role: "user" | "assistant" | "system";
-  content: string;
-  timestamp?: FirestoreDate;
-}
-
-export interface Conversation {
+export interface PatientAssessment {
   id: string;
-  hospitalId?: string;
-  patientId?: string;
-  patientName?: string;
-  patientInitials?: string;
+  assessmentId: string;
+  ownerUid?: string;
+  hospitalId: string;
+  source: "website" | "whatsapp" | string;
+  firstName?: string;
   age?: number | null;
-  dateOfBirth?: FirestoreDate;
   sex?: string;
-  postcode?: string;
   createdAt?: FirestoreDate;
-  startedAt?: FirestoreDate;
   updatedAt?: FirestoreDate;
   completedAt?: FirestoreDate;
-  status?: "started" | "in_progress" | "completed" | "abandoned" | string;
-  currentStage?: string;
-  completedStages?: string[];
-  durationSeconds?: number;
-  messageCount?: number;
-  patient?: {
-    name?: string;
-    initials?: string;
-    age?: number;
-    dateOfBirth?: FirestoreDate;
-    sex?: string;
-    postcode?: string;
-  };
-  demographics?: Record<string, unknown>;
+  conversationStarted: boolean;
+  conversationCompleted: boolean;
+  messageCount: number;
+  conversationDurationMinutes: number;
+  reportGenerated: boolean;
+  recommendedTreatment?: string;
+  recommendationRationale?: string;
   symptomSummary?: string;
-  symptoms?: Record<string, unknown>;
-  impactScores?: Record<string, number | string | null>;
-  treatmentHistory?: unknown;
-  socialFactors?: unknown;
-  aiRecommendation?: string;
-  aiRecommendationRationale?: string;
-  recommendation?: {
-    type?: string;
-    rationale?: string;
-  };
-  reportGenerated?: boolean;
-  reportUrl?: string;
+  previousTreatments?: string;
+  socialFactors?: string;
   pdfUrl?: string;
-  transcript?: ConversationMessage[];
-  preparednessScore?: number;
-  understandingScore?: number;
-  satisfactionScore?: number;
-  clinicalReview?: ClinicalReview;
-}
-
-export interface PatientReport {
-  id: string;
-  conversationId?: string;
-  patientId?: string;
-  hospitalId?: string;
-  url?: string;
-  downloadUrl?: string;
   storagePath?: string;
-  createdAt?: FirestoreDate;
+  reportCreatedAt?: FirestoreDate;
+  reportExpiryDate?: FirestoreDate;
+  promptVersion?: string;
+  reviewStatus: ReviewStatus;
+  openAiResponseId?: string;
+  sessionId?: string;
 }
 
-export interface FollowUpSurvey {
-  id: string;
-  conversationId?: string;
-  patientId?: string;
+export interface PreClinicQuestionnaire {
+  id?: string;
+  assessmentId?: string;
   hospitalId?: string;
-  preparednessScore?: number;
-  understandingScore?: number;
-  satisfactionScore?: number;
-  responses?: Record<string, unknown>;
-  createdAt?: FirestoreDate;
-  submittedAt?: FirestoreDate;
+  questionnaireDate?: FirestoreDate;
+  understanding?: QuestionnaireScore;
+  patientKnowledge?: QuestionnaireScore;
+  preparedness?: QuestionnaireScore;
+  decisionConfidence?: QuestionnaireScore;
+  sharedDecisionMaking?: QuestionnaireScore;
+  recommendationSatisfaction?: QuestionnaireScore;
+  usability?: QuestionnaireScore;
+  missingInformation?: string;
+  chatbotSupportive?: QuestionnaireScore;
+  recommendChatbot?: QuestionnaireScore;
+  pdaType?: "paper" | "chatbot";
+  updatedAt?: FirestoreDate;
+}
+
+export interface PostClinicQuestionnaire {
+  id?: string;
+  assessmentId?: string;
+  hospitalId?: string;
+  questionnaireDate?: FirestoreDate;
+  appointmentPreparedness?: QuestionnaireScore;
+  treatmentUnderstanding?: QuestionnaireScore;
+  questionsAnswered?: QuestionnaireScore;
+  recommendationMatchedDoctor?: "yes" | "partially" | "no";
+  differenceReason?: string;
+  stillHelpful?: QuestionnaireScore;
+  comfortableWithPlan?: QuestionnaireScore;
+  recommendToOthers?: QuestionnaireScore;
+  updatedAt?: FirestoreDate;
+}
+
+export interface AssessmentClinicianReview {
+  id?: string;
+  assessmentId?: string;
+  hospitalId?: string;
+  reviewDate?: FirestoreDate;
+  reviewedBy?: string;
+  reviewedByEmail?: string;
+  clinicianTreatment?: string;
+  aiTreatment?: string;
+  concordance?: boolean;
+  discordanceReason?: string;
+  updatedAt?: FirestoreDate;
 }
 
 export interface DashboardMetrics {
-  conversationsStartedToday: number;
-  conversationsCompletedToday: number;
+  conversationsStarted: number;
+  conversationsCompleted: number;
   completionRate: number;
   reportsGenerated: number;
-  averageDurationSeconds: number;
+  averageDurationMinutes: number;
   averagePreparednessScore: number;
   averageUnderstandingScore: number;
   averageSatisfactionScore: number;
@@ -168,7 +134,16 @@ export interface AnalyticsSnapshot {
   concordance: Array<{
     aiRecommendation: string;
     clinicianRecommendation: string;
-    concordance: Concordance;
+    concordance: boolean;
     count: number;
   }>;
+  pendingReviews: number;
+  reviewedAssessments: number;
+}
+
+export interface DataSourceAuditRow {
+  collectionName: string;
+  documentCount: number;
+  lastUpdated?: FirestoreDate;
+  widgets: string[];
 }

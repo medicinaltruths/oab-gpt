@@ -4,218 +4,203 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { Icon } from "@/components/admin/icons";
 import { useAdminData } from "@/components/admin/useAdminData";
-import { Badge, EmptyState, fieldClass, LoadingState, PageHeader, Panel } from "@/components/admin/ui";
 import {
-  calculateConcordance,
-  formatDate,
-  getAiRecommendation,
-  getPatientAge,
-  getPatientName,
-  normalizeRecommendation,
-  toDate,
-} from "@/lib/admin-data";
-
-function statusTone(status?: string) {
-  if (status === "completed") return "success" as const;
-  if (status === "abandoned") return "danger" as const;
-  if (status === "in_progress") return "info" as const;
-  return "warning" as const;
-}
+  Badge,
+  EmptyState,
+  fieldClass,
+  LoadingState,
+  PageHeader,
+  Panel,
+} from "@/components/admin/ui";
+import { formatDate, normalizeRecommendation, toDate } from "@/lib/admin-data";
 
 export default function PatientsPage() {
-  const { conversations, loading } = useAdminData();
+  const { assessments, loading } = useAdminData();
   const [search, setSearch] = useState("");
+  const [age, setAge] = useState("");
   const [recommendation, setRecommendation] = useState("");
-  const [status, setStatus] = useState("");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  const [reviewStatus, setReviewStatus] = useState("");
+  const [date, setDate] = useState("");
 
   const filtered = useMemo(() => {
     const searchTerm = search.trim().toLowerCase();
-    return [...conversations]
-      .filter((conversation) => {
-        const aiRecommendation = normalizeRecommendation(getAiRecommendation(conversation));
-        const clinicianRecommendation = conversation.clinicalReview?.finalRecommendation || "";
-        const date = toDate(conversation.startedAt || conversation.createdAt);
+    return [...assessments]
+      .filter((assessment) => {
+        const treatment = normalizeRecommendation(assessment.recommendedTreatment);
+        const assessmentDate = toDate(assessment.createdAt);
         if (
           searchTerm &&
-          !`${getPatientName(conversation)} ${conversation.id} ${aiRecommendation} ${clinicianRecommendation}`
+          !`${assessment.assessmentId} ${assessment.firstName || ""}`
             .toLowerCase()
             .includes(searchTerm)
         ) {
           return false;
         }
-        if (recommendation && aiRecommendation !== recommendation) return false;
-        if (status && conversation.status !== status) return false;
-        if (dateFrom && (!date || date < new Date(`${dateFrom}T00:00:00`))) return false;
-        if (dateTo && (!date || date > new Date(`${dateTo}T23:59:59`))) return false;
+        if (age && assessment.age !== Number(age)) return false;
+        if (recommendation && treatment !== recommendation) return false;
+        if (reviewStatus && assessment.reviewStatus !== reviewStatus) return false;
+        if (
+          date &&
+          (!assessmentDate ||
+            assessmentDate.toISOString().slice(0, 10) !== date)
+        ) {
+          return false;
+        }
         return true;
       })
       .sort(
         (left, right) =>
-          (toDate(right.startedAt || right.createdAt)?.getTime() || 0) -
-          (toDate(left.startedAt || left.createdAt)?.getTime() || 0),
+          (toDate(right.createdAt)?.getTime() || 0) -
+          (toDate(left.createdAt)?.getTime() || 0),
       );
-  }, [conversations, dateFrom, dateTo, recommendation, search, status]);
+  }, [age, assessments, date, recommendation, reviewStatus, search]);
 
   if (loading) return <LoadingState />;
 
   return (
     <div className="space-y-7">
       <PageHeader
-        eyebrow="Patient records"
-        title="Conversations and reviews"
-        description="Search assessment records, inspect recommendations, and continue clinician reviews."
+        eyebrow="Patient assessments"
+        title="Patients"
+        description="Search permanent Firestore assessment records and open clinical review workflows."
         action={
-          <div className="flex items-center gap-2 text-xs text-slate-500">
-            <span className="font-semibold text-slate-200">{filtered.length}</span> records
-          </div>
+          <p className="text-xs text-slate-500">
+            <span className="font-semibold text-slate-200">{filtered.length}</span>{" "}
+            records
+          </p>
         }
       />
 
-      <Panel>
-        <div className="grid gap-3 border-b border-white/[0.07] p-4 sm:p-5 lg:grid-cols-[minmax(230px,1.5fr)_repeat(4,minmax(140px,1fr))]">
+      <Panel title="Search and filters">
+        <div className="grid gap-3 p-4 sm:p-5 lg:grid-cols-[minmax(230px,1.5fr)_repeat(4,minmax(135px,1fr))]">
           <label className="relative">
-            <span className="sr-only">Search patients</span>
-            <Icon name="search" className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-slate-600" />
+            <span className="sr-only">Assessment ID or first name</span>
+            <Icon
+              name="search"
+              className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-slate-600"
+            />
             <input
               type="search"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search patient or recommendation"
+              placeholder="Assessment ID or first name"
               className={`${fieldClass} pl-10`}
             />
           </label>
+          <input
+            aria-label="Patient age"
+            type="number"
+            min="0"
+            value={age}
+            onChange={(event) => setAge(event.target.value)}
+            placeholder="Age"
+            className={fieldClass}
+          />
           <select
-            aria-label="Recommendation type"
+            aria-label="Treatment recommendation"
             value={recommendation}
             onChange={(event) => setRecommendation(event.target.value)}
             className={fieldClass}
           >
-            <option value="">All recommendations</option>
-            {["PTNS", "Botox", "SNM", "Conservative", "Surgery", "Medication", "Other"].map((item) => (
-              <option key={item}>{item}</option>
-            ))}
+            <option value="">All treatments</option>
+            {["PTNS", "Botox", "SNM", "Medication", "Conservative", "Other"].map(
+              (item) => (
+                <option key={item}>{item}</option>
+              ),
+            )}
           </select>
+          <input
+            aria-label="Assessment date"
+            type="date"
+            value={date}
+            onChange={(event) => setDate(event.target.value)}
+            className={fieldClass}
+          />
           <select
-            aria-label="Completion status"
-            value={status}
-            onChange={(event) => setStatus(event.target.value)}
+            aria-label="Review status"
+            value={reviewStatus}
+            onChange={(event) => setReviewStatus(event.target.value)}
             className={fieldClass}
           >
-            <option value="">All statuses</option>
-            <option value="started">Started</option>
-            <option value="in_progress">In progress</option>
-            <option value="completed">Completed</option>
-            <option value="abandoned">Abandoned</option>
+            <option value="">All review statuses</option>
+            <option value="pending">Pending</option>
+            <option value="reviewed">Reviewed</option>
           </select>
-          <input
-            aria-label="Date from"
-            type="date"
-            value={dateFrom}
-            onChange={(event) => setDateFrom(event.target.value)}
-            className={fieldClass}
-          />
-          <input
-            aria-label="Date to"
-            type="date"
-            value={dateTo}
-            onChange={(event) => setDateTo(event.target.value)}
-            className={fieldClass}
-          />
         </div>
+      </Panel>
 
-        {!filtered.length ? (
+      {!filtered.length ? (
+        <Panel>
           <EmptyState
-            title="No patient records match"
-            description="Adjust the filters or wait for new conversations to arrive."
+            title="No assessment records match"
+            description="Adjust the search filters or check Data Sources to confirm assessments are being written."
             icon="patients"
           />
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[1050px] border-collapse text-left">
-              <thead>
-                <tr className="border-b border-white/[0.07] text-[10px] uppercase tracking-[0.14em] text-slate-600">
-                  {[
-                    "Patient Name",
-                    "Age",
-                    "Date",
-                    "Status",
-                    "AI Recommendation",
-                    "Doctor Recommendation",
-                    "Concordance",
-                    "",
-                  ].map((heading) => (
-                    <th key={heading} className="px-5 py-3 font-semibold">
-                      {heading}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((conversation) => {
-                  const aiRecommendation = getAiRecommendation(conversation);
-                  const doctorRecommendation = conversation.clinicalReview?.finalRecommendation;
-                  const concordance =
-                    conversation.clinicalReview?.concordance ||
-                    calculateConcordance(aiRecommendation, doctorRecommendation);
-                  return (
-                    <tr
-                      key={conversation.id}
-                      className="border-b border-white/[0.05] text-xs transition hover:bg-white/[0.025]"
-                    >
-                      <td className="px-5 py-4">
-                        <Link
-                          href={`/admin/patient/${conversation.id}`}
-                          className="font-medium text-slate-100 hover:text-cyan-200"
-                        >
-                          {getPatientName(conversation)}
-                        </Link>
-                        <p className="mt-1 max-w-[11rem] truncate text-[10px] text-slate-600">{conversation.id}</p>
-                      </td>
-                      <td className="px-5 py-4 text-slate-400">{getPatientAge(conversation) ?? "—"}</td>
-                      <td className="px-5 py-4 text-slate-400">
-                        {formatDate(conversation.startedAt || conversation.createdAt)}
-                      </td>
-                      <td className="px-5 py-4">
-                        <Badge tone={statusTone(conversation.status)}>
-                          {(conversation.status || "started").replace("_", " ")}
-                        </Badge>
-                      </td>
-                      <td className="px-5 py-4 text-slate-300">{aiRecommendation}</td>
-                      <td className="px-5 py-4 text-slate-400">{doctorRecommendation || "Not reviewed"}</td>
-                      <td className="px-5 py-4">
-                        <Badge
-                          tone={
-                            concordance === "Match"
-                              ? "success"
-                              : concordance === "Partial Match"
-                                ? "warning"
-                                : concordance === "Different"
-                                  ? "danger"
-                                  : "neutral"
-                          }
-                        >
-                          {concordance}
-                        </Badge>
-                      </td>
-                      <td className="px-5 py-4 text-right">
-                        <Link
-                          href={`/admin/patient/${conversation.id}`}
-                          aria-label={`Open ${getPatientName(conversation)}`}
-                          className="inline-grid size-10 place-items-center rounded-xl text-slate-500 transition hover:bg-cyan-300/[0.08] hover:text-cyan-200"
-                        >
-                          <Icon name="chevron" className="size-4" />
-                        </Link>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Panel>
+        </Panel>
+      ) : (
+        <section className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+          {filtered.map((assessment) => (
+            <article
+              key={assessment.assessmentId}
+              className="rounded-2xl border border-white/[0.08] bg-[#07101f]/90 p-5 shadow-[0_20px_50px_rgba(0,0,0,0.18)]"
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-300/60">
+                    {assessment.assessmentId}
+                  </p>
+                  <h2 className="mt-2 truncate font-[var(--font-display)] text-2xl font-semibold text-[#f8f1d5]">
+                    {assessment.firstName || "Anonymous patient"}
+                  </h2>
+                </div>
+                <Badge tone={assessment.reviewStatus === "reviewed" ? "success" : "warning"}>
+                  {assessment.reviewStatus || "pending"}
+                </Badge>
+              </div>
+
+              <dl className="mt-5 grid grid-cols-2 gap-4 border-y border-white/[0.06] py-4 text-xs">
+                <div>
+                  <dt className="text-slate-600">Age</dt>
+                  <dd className="mt-1 font-medium text-slate-300">{assessment.age ?? "—"}</dd>
+                </div>
+                <div>
+                  <dt className="text-slate-600">Date</dt>
+                  <dd className="mt-1 font-medium text-slate-300">
+                    {formatDate(assessment.createdAt)}
+                  </dd>
+                </div>
+                <div className="col-span-2">
+                  <dt className="text-slate-600">AI recommendation</dt>
+                  <dd className="mt-1 font-medium text-cyan-100">
+                    {assessment.recommendedTreatment || "Not yet recorded"}
+                  </dd>
+                </div>
+              </dl>
+
+              <div className="mt-5 flex flex-wrap gap-3">
+                <Link
+                  href={`/admin/patient/${assessment.assessmentId}`}
+                  className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-cyan-200 px-4 text-xs font-semibold text-[#031018] transition hover:bg-cyan-100"
+                >
+                  Open assessment
+                  <Icon name="arrow" className="size-4" />
+                </Link>
+                {assessment.pdfUrl ? (
+                  <a
+                    href={assessment.pdfUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-white/10 px-4 text-xs font-medium text-slate-300 transition hover:border-cyan-200/25 hover:text-cyan-100"
+                  >
+                    <Icon name="document" className="size-4" />
+                    Open PDF
+                  </a>
+                ) : null}
+              </div>
+            </article>
+          ))}
+        </section>
+      )}
     </div>
   );
 }

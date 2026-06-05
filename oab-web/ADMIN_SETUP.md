@@ -1,53 +1,85 @@
-# OAB-GPT Clinician Portal Setup
+# OAB-GPT Assessment Tracking Setup
 
-## Authentication
+## Clinician Authentication
 
-1. Enable **Email/Password** in Firebase Authentication.
-2. Create clinician users in the Firebase Console or through a trusted admin process.
-3. Do not expose Firebase account creation in the client application.
+Enable Email/Password in Firebase Authentication. Clinicians cannot self-register in the application.
 
-For each approved user, create:
+Create each approved account in Firebase Authentication, then create:
 
 ```text
 clinician_accounts/{lowercase-email-address}
 ```
 
-Example document:
+Example:
 
 ```json
 {
   "email": "clinician@hospital.org",
-  "displayName": "Dr Example",
+  "displayName": "Mr Deji Akiboye",
   "role": "clinician",
-  "hospitalId": "hospital-001",
-  "hospitalIds": ["hospital-001"],
-  "hospitalName": "Example Hospital",
-  "active": true,
-  "createdAt": "Firestore server timestamp",
-  "updatedAt": "Firestore server timestamp"
+  "hospitalId": "esth",
+  "hospitalIds": ["esth"],
+  "hospitalName": "Epsom and St Helier",
+  "active": true
 }
 ```
 
-The document ID must be the clinician's lowercase email address. This allows Firestore rules to verify access without exposing the clinician directory.
+The document ID must be the clinician's lowercase email address.
 
-## Collections
+## Assessment Collection
 
-The portal reads these top-level collections in real time:
+Website and WhatsApp assessments write to:
 
-- `conversations`
-- `analytics`
-- `patient_reports`
-- `follow_up_surveys`
-- `clinician_accounts`
+```text
+patient_assessments/{assessmentId}
+```
 
-All new documents should include `createdAt` and `updatedAt` server timestamps. Event-specific timestamps should also be stored, including `startedAt`, `completedAt`, `submittedAt`, and `reviewedAt`.
+Questionnaires and reviews are stored at:
 
-Add `hospitalId` to every clinical record. Clinician account documents already support `hospitalId` and `hospitalIds` so hospital-scoped Firestore queries and rules can be introduced without changing the UI data model.
+```text
+patient_assessments/{assessmentId}/preClinicQuestionnaire/latest
+patient_assessments/{assessmentId}/postClinicQuestionnaire/latest
+patient_assessments/{assessmentId}/clinicianReview/latest
+```
+
+Every assessment and subcollection document contains `hospitalId`. The clinician portal queries only the hospitals listed on the signed-in clinician account.
+
+The dashboard reads exclusively from `patient_assessments`, `preClinicQuestionnaire`, and `clinicianReview`. OpenAI response logs are not a dashboard data source.
+
+## Environment
+
+Website:
+
+```text
+NEXT_PUBLIC_DEFAULT_HOSPITAL_ID=esth
+OPENAI_RESPONSE_PROMPT_VERSION=15
+```
+
+Cloud Functions:
+
+```text
+DEFAULT_HOSPITAL_ID=esth
+CHAT_API_URL=https://your-domain.example/api/chat
+```
+
+## PDF Retention
+
+Generated reports are stored in Firebase Storage with a stable Firebase download-token URL. Each assessment stores:
+
+- `pdfUrl`
+- `storagePath`
+- `reportCreatedAt`
+- `reportExpiryDate`
+- `promptVersion`
+
+`reportExpiryDate` is set to 365 days after report generation. Ensure the Firebase Storage bucket does not have a lifecycle rule that deletes `reports/` objects before 365 days.
 
 ## Deployment
 
-Deploy the included Firestore rules from the repository root:
+From the repository root:
 
 ```bash
-firebase deploy --only firestore:rules
+firebase deploy --only firestore:rules,storage,functions
 ```
+
+After deployment, use `/admin/data-sources` to confirm that assessment and WhatsApp records are arriving.

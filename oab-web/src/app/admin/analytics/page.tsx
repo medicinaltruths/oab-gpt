@@ -3,10 +3,10 @@
 import { BarChart, DonutChart, FunnelChart, LineChart } from "@/components/admin/charts";
 import { useAdminData } from "@/components/admin/useAdminData";
 import { KpiCard, LoadingState, PageHeader, Panel } from "@/components/admin/ui";
-import { formatDuration } from "@/lib/admin-data";
+import { formatDurationMinutes } from "@/lib/admin-data";
 
 export default function AnalyticsPage() {
-  const { analytics, conversations, loading } = useAdminData();
+  const { analytics, assessments, loading } = useAdminData();
   if (loading) return <LoadingState />;
 
   const completed = analytics.funnel[0]?.value
@@ -35,7 +35,7 @@ export default function AnalyticsPage() {
         />
         <KpiCard
           label="Average Conversation Length"
-          value={formatDuration(analytics.metrics.averageDurationSeconds)}
+          value={formatDurationMinutes(analytics.metrics.averageDurationMinutes)}
           icon="clock"
         />
         <KpiCard
@@ -47,7 +47,7 @@ export default function AnalyticsPage() {
       </section>
 
       <section className="grid gap-5 xl:grid-cols-2">
-        <Panel title="Recommendation Distribution" description={`${conversations.length} total conversations`}>
+        <Panel title="Recommendation Distribution" description={`${assessments.length} total assessments`}>
           <DonutChart data={analytics.recommendationDistribution} />
         </Panel>
         <Panel title="Completion Funnel" description={`${(completed * 100).toFixed(1)}% reached PDF generation`}>
@@ -58,18 +58,41 @@ export default function AnalyticsPage() {
         </Panel>
         <Panel title="AI vs Clinician Concordance" description="Reviewed records grouped by concordance category">
           <BarChart
-            data={["Match", "Partial Match", "Different"].map((label) => ({
-              label,
-              value: analytics.concordance
-                .filter((item) => item.concordance === label)
-                .reduce((sum, item) => sum + item.count, 0),
-            }))}
+            data={[
+              {
+                label: "Concordant",
+                value: analytics.concordance
+                  .filter((item) => item.concordance)
+                  .reduce((sum, item) => sum + item.count, 0),
+              },
+              {
+                label: "Discordant",
+                value: analytics.concordance
+                  .filter((item) => !item.concordance)
+                  .reduce((sum, item) => sum + item.count, 0),
+              },
+            ]}
             color="#86dcb0"
           />
         </Panel>
       </section>
 
-      <Panel title="Weekly Conversation Volume" description="New conversations started in the last seven days">
+      <section className="grid gap-4 sm:grid-cols-2">
+        <KpiCard
+          label="Pending Reviews"
+          value={analytics.pendingReviews}
+          icon="clock"
+          accent="gold"
+        />
+        <KpiCard
+          label="Reviewed Assessments"
+          value={analytics.reviewedAssessments}
+          icon="check"
+          accent="green"
+        />
+      </section>
+
+      <Panel title="Weekly Assessment Volume" description="New assessments started in the last seven days">
         <LineChart data={analytics.weeklyTrend} />
       </Panel>
     </div>

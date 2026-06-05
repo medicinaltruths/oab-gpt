@@ -8,6 +8,23 @@ type PdfFunctionResult = {
   expiresAt?: number;
 };
 
+type AssessmentUpdate = {
+  firstName?: string;
+  age?: number;
+  sex?: string;
+  conversationCompleted?: boolean;
+  recommendedTreatment?: string;
+  recommendationRationale?: string;
+  symptomSummary?: string;
+  previousTreatments?: string;
+  socialFactors?: string;
+  reportGenerated?: boolean;
+  pdfUrl?: string;
+  storagePath?: string;
+  reportExpiryDate?: number;
+  promptVersion?: string;
+};
+
 type ResponseLike = {
   id?: string;
   output_text?: string;
@@ -167,7 +184,7 @@ function buildResponsesTools() {
     {
       type: "function" as const,
       description:
-        "Create a downloadable PDF summary of the user's OAB discussion and preferences, store it in Firebase Storage, and return a short-lived download URL.",
+        "Create a downloadable PDF summary of the user's OAB discussion and preferences, store it in Firebase Storage for the assessment retention period, and return its download URL.",
       name: "generate_summary_pdf",
       parameters: {
         type: "object",
@@ -177,6 +194,14 @@ function buildResponsesTools() {
             type: "string",
             description:
               "User's first name or initials as they prefer to appear on the report.",
+          },
+          patient_age: {
+            type: "number",
+            description: "Patient age in years, if stated during the assessment.",
+          },
+          patient_sex: {
+            type: "string",
+            description: "Patient sex, if stated during the assessment.",
           },
           symptom_summary: {
             type: "string",
@@ -250,6 +275,8 @@ async function executeGenerateSummaryPdf(
     traceId: string;
     sessionId: string;
     firebaseIdToken: string;
+    assessmentId: string;
+    hospitalId: string;
   }
 ): Promise<{ call_id: string; output: string }> {
   let args: Record<string, unknown> = {};
@@ -283,6 +310,9 @@ async function executeGenerateSummaryPdf(
     treatmentExplanation: String(args.treatment_explanation ?? ""),
     questionsForDoctor: String(args.questions_for_doctor ?? ""),
     sessionId: options.sessionId || `responses-${Date.now()}`,
+    assessmentId: options.assessmentId,
+    hospitalId: options.hospitalId,
+    promptVersion: `V${RESPONSE_PROMPT_VERSION}`,
   };
 
   const headers: HeadersInit = { "Content-Type": "application/json" };
@@ -405,7 +435,7 @@ function buildFallbackReply(url: string): string {
   return (
     `Ok, I've created your report! You can download it here:\n\n` +
     `[Download your report here.](${url})\n\n` +
-    `This link will be available for about 48 hours.\n\n` +
+    `Your report will be retained securely for 12 months.\n\n` +
     `Is there anything else you'd like me to assist you with?\n\n`
   );
 }
@@ -432,6 +462,8 @@ export async function POST(req: Request) {
       newSession?: boolean;
       sessionId?: string | null;
       firebaseIdToken?: string | null;
+      assessmentId?: string | null;
+      hospitalId?: string | null;
     };
 
     const prompt = String(body.prompt ?? "");
@@ -443,6 +475,12 @@ export async function POST(req: Request) {
         : `chat-${Date.now()}`;
     const firebaseIdToken =
       typeof body.firebaseIdToken === "string" ? body.firebaseIdToken.trim() : "";
+    const assessmentId =
+      typeof body.assessmentId === "string" ? body.assessmentId.trim() : "";
+    const hospitalId =
+      typeof body.hospitalId === "string" && body.hospitalId.trim()
+        ? body.hospitalId.trim()
+        : "esth";
 
     if (threadId === "null" || threadId === "undefined") threadId = "";
     if (threadId.startsWith("thread_")) threadId = "";
@@ -482,6 +520,7 @@ export async function POST(req: Request) {
     const wantNewReport = isNewReportRequest(prompt);
     const wantLinkOnly = !wantNewReport && isSendLinkRequest(prompt);
     let lastToolResult: PdfFunctionResult | null = null;
+    let assessmentUpdate: AssessmentUpdate | null = null;
     const priorUrl =
       wantLinkOnly && threadId
         ? await findLatestReportUrlFromResponseChain(client, threadId)
@@ -545,14 +584,63 @@ export async function POST(req: Request) {
           continue;
         }
 
+        let toolArgs: Record<string, unknown> = {};
+        try {
+          toolArgs = JSON.parse(call.arguments || "{}") as Record<string, unknown>;
+        } catch {
+          toolArgs = {};
+        }
+
         const result = await executeGenerateSummaryPdf(call, {
           traceId: response.id || threadId || "",
           sessionId,
           firebaseIdToken,
+          assessmentId,
+          hospitalId,
         });
         const parsedResult = extractPdfResultFromToolOutput(result.output);
         if (parsedResult) {
           lastToolResult = parsedResult;
+          assessmentUpdate = {
+            firstName:
+              typeof toolArgs.patient_name === "string"
+                ? toolArgs.patient_name.trim()
+                : undefined,
+            age:
+              typeof toolArgs.patient_age === "number"
+                ? toolArgs.patient_age
+                : undefined,
+            sex:
+              typeof toolArgs.patient_sex === "string"
+                ? toolArgs.patient_sex.trim()
+                : undefined,
+            conversationCompleted: parsedResult.ok === true,
+            recommendedTreatment:
+              typeof toolArgs.treatment_recommended === "string"
+                ? toolArgs.treatment_recommended.trim()
+                : undefined,
+            recommendationRationale:
+              typeof toolArgs.treatment_explanation === "string"
+                ? toolArgs.treatment_explanation.trim()
+                : undefined,
+            symptomSummary:
+              typeof toolArgs.symptom_summary === "string"
+                ? toolArgs.symptom_summary.trim()
+                : undefined,
+            previousTreatments:
+              typeof toolArgs.previous_treatments === "string"
+                ? toolArgs.previous_treatments.trim()
+                : undefined,
+            socialFactors:
+              typeof toolArgs.social_factors === "string"
+                ? toolArgs.social_factors.trim()
+                : undefined,
+            reportGenerated: parsedResult.ok === true,
+            pdfUrl: parsedResult.downloadUrl,
+            storagePath: parsedResult.storagePath,
+            reportExpiryDate: parsedResult.expiresAt,
+            promptVersion: `V${RESPONSE_PROMPT_VERSION}`,
+          };
         }
         toolOutputs.push({
           type: "function_call_output",
@@ -590,6 +678,7 @@ export async function POST(req: Request) {
           JSON.stringify({
             reply: buildFallbackReply(String(lastToolResult.downloadUrl)),
             threadId: response.id || threadId,
+            assessmentUpdate,
           }),
           { status: 200 }
         );
@@ -643,6 +732,7 @@ export async function POST(req: Request) {
       JSON.stringify({
         reply: finalReply,
         threadId: finalThreadId,
+        assessmentUpdate,
       }),
       { status: 200 }
     );

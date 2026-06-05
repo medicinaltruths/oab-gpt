@@ -49,14 +49,10 @@ export default function OutcomesPage() {
                     <td className="px-6 py-4">
                       <Badge
                         tone={
-                          row.concordance === "Match"
-                            ? "success"
-                            : row.concordance === "Partial Match"
-                              ? "warning"
-                              : "danger"
+                          row.concordance ? "success" : "danger"
                         }
                       >
-                        {row.concordance}
+                        {row.concordance ? "Concordant" : "Discordant"}
                       </Badge>
                     </td>
                     <td className="px-6 py-4 text-right text-lg font-semibold text-slate-100">{row.count}</td>

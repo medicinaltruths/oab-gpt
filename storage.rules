@@ -5,13 +5,24 @@ rules_version = '2';
 //    /databases/(default)/documents/users/$(request.auth.uid)).data.isAdmin;
 service firebase.storage {
   match /b/{bucket}/o {
+    function isClinician() {
+      return request.auth != null &&
+        request.auth.token.email != null &&
+        firestore.exists(
+          /databases/(default)/documents/clinician_accounts/$(request.auth.token.email.lower())
+        );
+    }
+
     match /reports/{uid}/{allPaths=**} {
-      allow read: if request.auth != null && request.auth.uid == uid;
+      allow read: if
+        (request.auth != null && request.auth.uid == uid) ||
+        isClinician();
       allow write: if false;
     }
 
     match /reports/anon/{allPaths=**} {
-      allow read, write: if false;
+      allow read: if isClinician();
+      allow write: if false;
     }
 
     match /{allPaths=**} {

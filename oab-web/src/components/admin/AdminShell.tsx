@@ -11,6 +11,7 @@ const navigation: Array<{ href: string; label: string; icon: IconName; exact?: b
   { href: "/admin/patients", label: "Patients", icon: "patients" },
   { href: "/admin/analytics", label: "Analytics", icon: "analytics" },
   { href: "/admin/outcomes", label: "Outcomes", icon: "activity" },
+  { href: "/admin/data-sources", label: "Data Sources", icon: "document" },
 ];
 
 export function AdminShell({ children }: { children: ReactNode }) {

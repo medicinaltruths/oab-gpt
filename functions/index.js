@@ -8,12 +8,14 @@ const admin = require("firebase-admin");
 const twilio = require("twilio");
 const corsMW = require("cors");
 const { PDFDocument, rgb, StandardFonts } = require("pdf-lib");
+const { randomUUID } = require("crypto");
 
-const BUILD_TAG = "generateSummaryPdf v4 (2026-04-14)";
+const BUILD_TAG = "generateSummaryPdf v5 (2026-06-05)";
 
 // ===== Configure =====
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "*"; // e.g. "https://oab.yourdomain.com"
-const SIGNED_URL_FALLBACK_MINUTES = 48 * 60; // 48 hours for unauthenticated test calls
+const REPORT_RETENTION_DAYS = 365;
+const DEFAULT_HOSPITAL_ID = process.env.DEFAULT_HOSPITAL_ID || "esth";
 const TWILIO_WHATSAPP_MODE =
   (process.env.TWILIO_WHATSAPP_MODE || "sandbox").toLowerCase();
 const TWILIO_WHATSAPP_SANDBOX_KEYWORD =
@@ -74,6 +76,51 @@ function isUkMobileNumber(value) {
 
 function whatsappContactDocId(phoneNumber) {
   return String(phoneNumber || "").replace(/\D/g, "");
+}
+
+function createAssessmentId() {
+  const year = new Date().getUTCFullYear();
+  const timestamp = Date.now().toString(36).toUpperCase();
+  const random = randomUUID().replace(/-/g, "").slice(0, 6).toUpperCase();
+  return `OAB-${year}-${timestamp}${random}`;
+}
+
+async function ensureWhatsappAssessment(options) {
+  const existingId = String(options.assessmentId || "").trim();
+  if (existingId) {
+    const existingRef = db.collection("patient_assessments").doc(existingId);
+    const existingSnapshot = await existingRef.get();
+    if (existingSnapshot.exists && !existingSnapshot.get("conversationCompleted")) {
+      return {
+        assessmentId: existingId,
+        ref: existingRef,
+        snapshot: existingSnapshot,
+        created: false,
+      };
+    }
+  }
+
+  const assessmentId = createAssessmentId();
+  const ref = db.collection("patient_assessments").doc(assessmentId);
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  await ref.set({
+    assessmentId,
+    hospitalId: options.hospitalId || DEFAULT_HOSPITAL_ID,
+    source: "whatsapp",
+    firstName: options.firstName || null,
+    conversationStarted: true,
+    conversationCompleted: false,
+    messageCount: 0,
+    conversationDurationMinutes: 0,
+    reportGenerated: false,
+    promptVersion: "V15",
+    reviewStatus: "pending",
+    sessionId: options.sessionId || null,
+    whatsappContactId: options.contactId || null,
+    createdAt: now,
+    updatedAt: now,
+  });
+  return {assessmentId, ref, snapshot: null, created: true};
 }
 
 function normalizeTwilioAddress(value) {
@@ -620,10 +667,39 @@ exports.generateSummaryPdf = onRequest(async (req, res) => {
         treatmentExplanation: coerceText(body.treatmentExplanation),
         questionsForDoctor: coerceText(body.questionsForDoctor),
       };
+      const assessmentId = isString(body.assessmentId) ? body.assessmentId.trim() : "";
+      let hospitalId = isString(body.hospitalId) ?
+        body.hospitalId.trim() :
+        DEFAULT_HOSPITAL_ID;
+      const promptVersion = isString(body.promptVersion) ?
+        body.promptVersion.trim() :
+        "V15";
 
       // Try to verify Firebase Auth
       const decoded = await verifyIdTokenFromHeader(req); // null if not present/invalid
       const uid = decoded && decoded.uid ? decoded.uid : null;
+      let assessmentRef = null;
+
+      if (assessmentId) {
+        assessmentRef = db.collection("patient_assessments").doc(assessmentId);
+        const assessmentSnapshot = await assessmentRef.get();
+        if (!assessmentSnapshot.exists) {
+          return res.status(404).json({ok: false, error: "Assessment record not found"});
+        }
+
+        const assessmentData = assessmentSnapshot.data() || {};
+        const ownerAuthorized =
+          uid && assessmentData.ownerUid && assessmentData.ownerUid === uid;
+        const whatsappAuthorized =
+          assessmentData.source === "whatsapp" &&
+          assessmentData.sessionId &&
+          assessmentData.sessionId === body.sessionId;
+
+        if (!ownerAuthorized && !whatsappAuthorized) {
+          return res.status(403).json({ok: false, error: "Assessment update not authorised"});
+        }
+        hospitalId = assessmentData.hospitalId || hospitalId;
+      }
 
       // Build PDF
       const pdfBytes = await makePdf(payload);
@@ -639,24 +715,48 @@ exports.generateSummaryPdf = onRequest(async (req, res) => {
       await file.save(Buffer.from(pdfBytes), {
         metadata: {
           contentType: "application/pdf",
-          cacheControl: "no-store",
+          cacheControl: "private, max-age=3600",
+          metadata: {
+            firebaseStorageDownloadTokens: randomUUID(),
+            assessmentId: assessmentId || "",
+            hospitalId: hospitalId,
+            reportRetentionDays: String(REPORT_RETENTION_DAYS),
+          },
         },
         resumable: false,
       });
 
-      const ttlMsFromBody = (typeof body.signedUrlTTLms === "number" && body.signedUrlTTLms > 0)
-        ? Math.min(body.signedUrlTTLms, 7 * 24 * 60 * 60 * 1000) // cap at 7 days
-        : SIGNED_URL_FALLBACK_MINUTES * 60 * 1000; // default 48h
-      const expiresAt = now + ttlMsFromBody;
-      const signed = await file.getSignedUrl({
-        action: "read",
-        expires: expiresAt,
-      });
-      const url = signed && signed[0] ? signed[0] : null;
+      const [metadata] = await file.getMetadata();
+      const token = metadata.metadata && metadata.metadata.firebaseStorageDownloadTokens;
+      const expiresAt = now + REPORT_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+      const url = token ?
+        `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket.name)}` +
+          `/o/${encodeURIComponent(path)}?alt=media&token=${encodeURIComponent(token)}` :
+        null;
 
-      // Response strategy:
-      // - Always return a signed URL so the chat server can hand back a usable link
-      // - For authenticated calls also return storagePath for owner-scoped client access
+      if (assessmentRef) {
+        await assessmentRef.set({
+          assessmentId,
+          hospitalId,
+          firstName: payload.patientName === "Not provided" ? null : payload.patientName,
+          conversationCompleted: true,
+          completedAt: admin.firestore.FieldValue.serverTimestamp(),
+          reportGenerated: true,
+          pdfUrl: url,
+          storagePath: path,
+          reportCreatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          reportExpiryDate: admin.firestore.Timestamp.fromMillis(expiresAt),
+          recommendedTreatment: payload.treatmentRecommended,
+          recommendationRationale: payload.treatmentExplanation,
+          symptomSummary: payload.symptomSummary,
+          previousTreatments: payload.previousTreatments,
+          socialFactors: payload.socialFactors,
+          promptVersion,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, {merge: true});
+      }
+
+      // Return a Firebase download-token URL and the storage path.
       if (uid) {
         return res.status(200).json({
           ok: true,
@@ -665,7 +765,7 @@ exports.generateSummaryPdf = onRequest(async (req, res) => {
           downloadUrl: url,
           expiresAt: expiresAt,
           build: BUILD_TAG,
-          message: "Authenticated: stored in Firebase Storage and returning a short-lived download URL.",
+          message: "Stored in Firebase Storage with a 12-month assessment retention window.",
         });
       } else {
         return res.status(200).json({
@@ -674,7 +774,7 @@ exports.generateSummaryPdf = onRequest(async (req, res) => {
           downloadUrl: url,
           expiresAt: expiresAt,
           build: BUILD_TAG,
-          message: "Unauthenticated request: returning short-lived signed URL.",
+          message: "Stored in Firebase Storage with a 12-month assessment retention window.",
         });
       }
     } catch (err) {
@@ -704,6 +804,8 @@ exports.saveWhatsappContact = onRequest(async (req, res) => {
       const whatsappMode = String(
         body.whatsappMode || TWILIO_WHATSAPP_MODE
       ).trim().toLowerCase() || TWILIO_WHATSAPP_MODE;
+      const hospitalId = String(body.hospitalId || DEFAULT_HOSPITAL_ID).trim() ||
+        DEFAULT_HOSPITAL_ID;
       const starterMessage = String(
         body.starterMessage ||
           (isSandboxWhatsappMode() ?
@@ -733,6 +835,7 @@ exports.saveWhatsappContact = onRequest(async (req, res) => {
         sandboxKeyword: TWILIO_WHATSAPP_SANDBOX_KEYWORD,
         whatsappMode: whatsappMode,
         starterMessage: starterMessage || null,
+        hospitalId,
         openAiResponseId: existing.exists ? existing.get("openAiResponseId") || null : null,
       }, {merge: true});
 
@@ -780,7 +883,10 @@ exports.twilioWhatsappWebhook = onRequest(async (req, res) => {
       existing.starterMessage.trim() :
       (isSandboxWhatsappMode() ?
         `join ${TWILIO_WHATSAPP_SANDBOX_KEYWORD}` :
-        TWILIO_WHATSAPP_INITIAL_MESSAGE);
+      TWILIO_WHATSAPP_INITIAL_MESSAGE);
+    const hospitalId = isString(existing.hospitalId) ?
+      existing.hospitalId.trim() :
+      DEFAULT_HOSPITAL_ID;
     const now = admin.firestore.FieldValue.serverTimestamp();
 
     await ref.set({
@@ -795,6 +901,7 @@ exports.twilioWhatsappWebhook = onRequest(async (req, res) => {
       lastInboundMessageSid: messageSid,
       whatsappMode: whatsappMode,
       starterMessage: starterMessage || null,
+      hospitalId,
     }, {merge: true});
 
     if (!incomingText) {
@@ -839,6 +946,8 @@ exports.twilioWhatsappWebhook = onRequest(async (req, res) => {
       whatsappMode: whatsappMode,
       starterMessage: starterMessage || null,
       sessionId: sessionId,
+      hospitalId: hospitalId,
+      assessmentId: existing.currentAssessmentId || null,
     });
 
     await ref.set({
@@ -898,16 +1007,35 @@ exports.processWhatsappInboundMessage = onDocumentCreated(
         String(contact.openAiResponseId).trim() :
         (isString(job.openAiResponseId) ? String(job.openAiResponseId).trim() : "");
       const contactName = isString(contact.name) ? String(contact.name).trim() : name;
+      const hospitalId = isString(contact.hospitalId) ?
+        String(contact.hospitalId).trim() :
+        (isString(job.hospitalId) ? String(job.hospitalId).trim() : DEFAULT_HOSPITAL_ID);
+      const assessment = await ensureWhatsappAssessment({
+        assessmentId: contact.currentAssessmentId || job.assessmentId,
+        hospitalId,
+        firstName: contactName,
+        contactId,
+        sessionId,
+      });
+      const effectiveResponseId = assessment.created ? "" : openAiResponseId;
+      await contactRef.set({
+        currentAssessmentId: assessment.assessmentId,
+        hospitalId,
+        openAiResponseId: effectiveResponseId || null,
+        updatedAt: now,
+      }, {merge: true});
       const prompt = buildWhatsappPrompt({
         contactName: contactName,
         userMessage: incomingText,
-        hasExistingThread: !!openAiResponseId,
+        hasExistingThread: !!effectiveResponseId,
       });
 
       const chatResult = await postToChatApi({
         prompt: prompt,
-        threadId: openAiResponseId || "",
+        threadId: effectiveResponseId,
         sessionId: sessionId,
+        assessmentId: assessment.assessmentId,
+        hospitalId: hospitalId,
       });
 
       const reply = formatReplyForWhatsapp(chatResult.reply ||
@@ -918,10 +1046,29 @@ exports.processWhatsappInboundMessage = onDocumentCreated(
       const sentMessageSids = await sendWhatsappMessages(from, reply);
 
       await contactRef.set({
-        openAiResponseId: nextThreadId || openAiResponseId || null,
+        openAiResponseId: nextThreadId || effectiveResponseId || null,
         lastOutboundAt: now,
         lastOutboundBody: reply,
         lastOutboundMessageSids: sentMessageSids,
+        updatedAt: now,
+        currentAssessmentId: assessment.assessmentId,
+        hospitalId,
+      }, {merge: true});
+
+      const assessmentSnapshot = await assessment.ref.get();
+      const assessmentData = assessmentSnapshot.data() || {};
+      const createdAt = assessmentData.createdAt &&
+        typeof assessmentData.createdAt.toDate === "function" ?
+        assessmentData.createdAt.toDate().getTime() :
+        Date.now();
+      await assessment.ref.set({
+        firstName: contactName || assessmentData.firstName || null,
+        openAiResponseId: nextThreadId || effectiveResponseId || null,
+        messageCount: admin.firestore.FieldValue.increment(2),
+        conversationDurationMinutes: Math.max(
+          0,
+          Math.round((Date.now() - createdAt) / 60000)
+        ),
         updatedAt: now,
       }, {merge: true});
 
@@ -930,7 +1077,7 @@ exports.processWhatsappInboundMessage = onDocumentCreated(
         completedAt: now,
         updatedAt: now,
         reply: reply,
-        openAiResponseId: nextThreadId || openAiResponseId || null,
+        openAiResponseId: nextThreadId || effectiveResponseId || null,
         sentMessageSids: sentMessageSids,
       }, {merge: true});
     } catch (err) {

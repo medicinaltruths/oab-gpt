@@ -3,7 +3,7 @@
 import { DonutChart, FunnelChart, LineChart } from "@/components/admin/charts";
 import { useAdminData } from "@/components/admin/useAdminData";
 import { KpiCard, LoadingState, PageHeader, Panel } from "@/components/admin/ui";
-import { formatDuration } from "@/lib/admin-data";
+import { formatDurationMinutes } from "@/lib/admin-data";
 
 export default function AdminDashboardPage() {
   const { analytics, loading, error } = useAdminData();
@@ -30,10 +30,10 @@ export default function AdminDashboardPage() {
         </p>
       ) : null}
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <KpiCard label="Conversations Started Today" value={metrics.conversationsStartedToday} icon="activity" />
+        <KpiCard label="Conversations Started" value={metrics.conversationsStarted} icon="activity" />
         <KpiCard
-          label="Conversations Completed Today"
-          value={metrics.conversationsCompletedToday}
+          label="Conversations Completed"
+          value={metrics.conversationsCompleted}
           icon="check"
           accent="green"
         />
@@ -46,7 +46,7 @@ export default function AdminDashboardPage() {
         <KpiCard label="Reports Generated" value={metrics.reportsGenerated} icon="document" accent="gold" />
         <KpiCard
           label="Average Conversation Duration"
-          value={formatDuration(metrics.averageDurationSeconds)}
+          value={formatDurationMinutes(metrics.averageDurationMinutes)}
           icon="clock"
         />
         <KpiCard

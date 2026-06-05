@@ -5,6 +5,13 @@ import ReactMarkdown from "react-markdown";
 import QRCode from "qrcode";
 import { ClinicianLoginModal } from "@/components/ClinicianLoginModal";
 import { ensureAnonIdToken } from "@/lib/firebase";
+import {
+  clearCurrentAssessment,
+  ensureWebsiteAssessment,
+  getDefaultHospitalId,
+  recordAssessmentExchange,
+  type AssessmentApiUpdate,
+} from "@/lib/assessment-tracking";
 
 const THREAD_KEY = "oab_thread_id";
 const CHAT_SESSION_KEY = "oab_chat_session_id";
@@ -620,6 +627,7 @@ function ChatPane() {
       // stale or missing thread — ensure we start clean
       if (typeof window !== "undefined") {
         localStorage.removeItem(THREAD_KEY);
+        clearCurrentAssessment();
       }
       setThreadId(null);
     }
@@ -711,6 +719,10 @@ function ChatPane() {
         console.error("Failed to get Firebase ID token for PDF generation", err);
         return "";
       });
+      const assessmentId = await ensureWebsiteAssessment(sessionId).catch((err) => {
+        console.error("Failed to create Firestore assessment record", err);
+        return "";
+      });
 
       const res = await fetch("/api/chat", {
         method: "POST",
@@ -720,10 +732,17 @@ function ChatPane() {
           threadId,
           sessionId,
           firebaseIdToken: firebaseIdToken || undefined,
+          assessmentId: assessmentId || undefined,
+          hospitalId: getDefaultHospitalId(),
         }),
       });
 
-      const data: { threadId?: string; reply?: string; reason?: string } = await res.json();
+      const data: {
+        threadId?: string;
+        reply?: string;
+        reason?: string;
+        assessmentUpdate?: AssessmentApiUpdate;
+      } = await res.json();
       const replyText = data.reply || "…";
 
       if (data.threadId && data.threadId !== threadId) {
@@ -747,12 +766,15 @@ function ChatPane() {
                   threadId,
                   sessionId,
                   firebaseIdToken: firebaseIdToken || undefined,
+                  assessmentId: assessmentId || undefined,
+                  hospitalId: getDefaultHospitalId(),
                 }),
               });
 
               const retryData = (await retry.json()) as {
                 threadId?: string;
                 reply?: string;
+                assessmentUpdate?: AssessmentApiUpdate;
               };
 
               if (retryData.threadId && retryData.threadId !== threadId) {
@@ -769,6 +791,14 @@ function ChatPane() {
                   { role: "assistant", content: retryData.reply as string },
                 ]);
               }
+              if (assessmentId) {
+                await recordAssessmentExchange(
+                  assessmentId,
+                  retryData.assessmentUpdate,
+                ).catch((err) => {
+                  console.error("Failed to update Firestore assessment record", err);
+                });
+              }
             } catch (err) {
               console.error(err);
             } finally {
@@ -784,6 +814,13 @@ function ChatPane() {
         ...m,
         { role: "assistant", content: replyText },
       ]);
+      if (assessmentId) {
+        await recordAssessmentExchange(assessmentId, data.assessmentUpdate).catch(
+          (err) => {
+            console.error("Failed to update Firestore assessment record", err);
+          },
+        );
+      }
       taRef.current?.focus({ preventScroll: true } as FocusOptions);
     } finally {
       setBusy(false);
@@ -796,6 +833,7 @@ function ChatPane() {
       localStorage.removeItem(THREAD_KEY);
       localStorage.removeItem(CHAT_SESSION_KEY);
       localStorage.setItem(LAST_ACTIVITY_KEY, String(Date.now()));
+      clearCurrentAssessment();
     }
     setMessages([
       {
@@ -1146,8 +1184,8 @@ function ChatSection() {
                 </p>
                 <p>
                   Disclaimer - no patient confidential information is collected during this
-                  conversation and all reports are stored for 48 hours for you to download. After
-                  this time limit, reports are automatically deleted from our servers.
+                  conversation record and generated report are retained securely for 12 months
+                  to support clinical review, audit, and service evaluation.
                 </p>
               </div>
             </div>
