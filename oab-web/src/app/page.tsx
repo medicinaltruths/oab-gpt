@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import ReactMarkdown from "react-markdown";
 import QRCode from "qrcode";
+import { ClinicianLoginModal } from "@/components/ClinicianLoginModal";
 import { ensureAnonIdToken } from "@/lib/firebase";
 
 const THREAD_KEY = "oab_thread_id";
@@ -136,6 +137,8 @@ const HOW_FELICITY_ACCORDION_ITEMS: Array<{ title: string; points: string[] }> =
 ];
 
 function HeroTop() {
+  const [clinicianLoginOpen, setClinicianLoginOpen] = useState(false);
+
   function scrollToTarget(id: string, offset = 20, extraViewportRatio = 0) {
     const el = document.getElementById(id);
     if (!el) return;
@@ -146,6 +149,19 @@ function HeroTop() {
 
   return (
     <header className="relative isolate overflow-hidden bg-black">
+      <button
+        type="button"
+        onClick={() => setClinicianLoginOpen(true)}
+        className="absolute right-4 top-4 z-20 min-h-11 cursor-pointer rounded-xl border border-white/15 bg-[#020a1f]/70 px-4 text-xs font-semibold tracking-wide text-[#faf5d9]/80 backdrop-blur-md transition hover:border-cyan-200/35 hover:bg-cyan-200/[0.08] hover:text-cyan-100 focus:outline-none focus:ring-2 focus:ring-cyan-200/40 sm:right-7 sm:top-6"
+      >
+        Clinician login
+      </button>
+
+      <ClinicianLoginModal
+        open={clinicianLoginOpen}
+        onClose={() => setClinicianLoginOpen(false)}
+      />
+
       <div
         aria-hidden="true"
         className="pointer-events-none absolute inset-x-0 top-[14%] z-0 h-[26rem] bg-[radial-gradient(ellipse_at_50%_40%,rgba(67,228,237,0.22)_0%,rgba(31,132,148,0.14)_34%,rgba(14,74,83,0.08)_52%,rgba(0,0,0,0)_78%)] blur-3xl"
