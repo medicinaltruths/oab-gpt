@@ -5,8 +5,7 @@ import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
 import {
   buildAnalytics,
   subscribeAssessments,
-  subscribeClinicianReviews,
-  subscribePreClinicQuestionnaires,
+  subscribeAssessmentSubcollection,
 } from "@/lib/admin-data";
 import type {
   AssessmentClinicianReview,
@@ -27,47 +26,78 @@ export function useAdminData() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    let assessmentsReady = false;
-    let questionnairesReady = false;
-    let reviewsReady = false;
-    const updateLoading = () => {
-      if (assessmentsReady && questionnairesReady && reviewsReady) setLoading(false);
-    };
-    const handleError = (nextError: Error) => {
-      setError(nextError.message || "Unable to load assessment data.");
-      setLoading(false);
-    };
+    let childUnsubscribes: Array<() => void> = [];
+
     const unsubscribeAssessments = subscribeAssessments(
       clinician,
       (records) => {
+        childUnsubscribes.forEach((unsubscribe) => unsubscribe());
+        childUnsubscribes = [];
         setAssessments(records);
-        assessmentsReady = true;
-        updateLoading();
+        setError("");
+
+        if (!records.length) {
+          setPreClinicQuestionnaires([]);
+          setClinicianReviews([]);
+          setLoading(false);
+          return;
+        }
+
+        const questionnaireMap = new Map<string, PreClinicQuestionnaire>();
+        const reviewMap = new Map<string, AssessmentClinicianReview>();
+        let readyChildren = 0;
+        const expectedChildren = records.length * 2;
+        const childReady = () => {
+          readyChildren += 1;
+          if (readyChildren >= expectedChildren) setLoading(false);
+        };
+
+        records.forEach((assessment) => {
+          childUnsubscribes.push(
+            subscribeAssessmentSubcollection<PreClinicQuestionnaire>(
+              assessment.assessmentId,
+              "preClinicQuestionnaire",
+              (questionnaire) => {
+                if (questionnaire) {
+                  questionnaireMap.set(assessment.assessmentId, questionnaire);
+                } else {
+                  questionnaireMap.delete(assessment.assessmentId);
+                }
+                setPreClinicQuestionnaires([...questionnaireMap.values()]);
+                childReady();
+              },
+              () => childReady(),
+            ),
+          );
+          childUnsubscribes.push(
+            subscribeAssessmentSubcollection<AssessmentClinicianReview>(
+              assessment.assessmentId,
+              "clinicianReview",
+              (review) => {
+                if (review) {
+                  reviewMap.set(assessment.assessmentId, review);
+                } else {
+                  reviewMap.delete(assessment.assessmentId);
+                }
+                setClinicianReviews([...reviewMap.values()]);
+                childReady();
+              },
+              () => childReady(),
+            ),
+          );
+        });
       },
-      handleError,
-    );
-    const unsubscribeQuestionnaires = subscribePreClinicQuestionnaires(
-      clinician,
-      (records) => {
-        setPreClinicQuestionnaires(records);
-        questionnairesReady = true;
-        updateLoading();
+      (nextError) => {
+        setError(
+          `${nextError.message}. Check that the clinician account has hospitalId "esth" and that the latest Firestore rules are deployed.`,
+        );
+        setLoading(false);
       },
-      handleError,
     );
-    const unsubscribeReviews = subscribeClinicianReviews(
-      clinician,
-      (records) => {
-        setClinicianReviews(records);
-        reviewsReady = true;
-        updateLoading();
-      },
-      handleError,
-    );
+
     return () => {
       unsubscribeAssessments();
-      unsubscribeQuestionnaires();
-      unsubscribeReviews();
+      childUnsubscribes.forEach((unsubscribe) => unsubscribe());
     };
   }, [clinician]);
 

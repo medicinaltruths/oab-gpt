@@ -31,6 +31,11 @@ service cloud.firestore {
           "hospitalIds" in clinicianAccount() &&
           clinicianAccount().hospitalIds is list &&
           hospitalId in clinicianAccount().hospitalIds
+        ) ||
+        (
+          !("hospitalId" in clinicianAccount()) &&
+          !("hospitalIds" in clinicianAccount()) &&
+          hospitalId == "esth"
         )
       );
     }
@@ -77,6 +82,19 @@ service cloud.firestore {
           canAccessHospital(request.resource.data.hospitalId);
         allow delete: if false;
       }
+    }
+
+    // Compatibility for deployed dashboard collection-group listeners.
+    match /{path=**}/preClinicQuestionnaire/{documentId} {
+      allow read: if
+        resource.data.hospitalId is string &&
+        canAccessHospital(resource.data.hospitalId);
+    }
+
+    match /{path=**}/clinicianReview/{documentId} {
+      allow read: if
+        resource.data.hospitalId is string &&
+        canAccessHospital(resource.data.hospitalId);
     }
 
     match /whatsappContacts/{documentId} {

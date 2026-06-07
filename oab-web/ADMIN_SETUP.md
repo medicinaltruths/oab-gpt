@@ -26,6 +26,15 @@ Example:
 
 The document ID must be the clinician's lowercase email address.
 
+Existing clinician documents without hospital fields are treated as `esth` for backward compatibility. Add the explicit fields when possible:
+
+```json
+{
+  "hospitalId": "esth",
+  "hospitalIds": ["esth"]
+}
+```
+
 ## Assessment Collection
 
 Website and WhatsApp assessments write to:
@@ -79,7 +88,14 @@ Generated reports are stored in Firebase Storage with a stable Firebase download
 From the repository root:
 
 ```bash
-firebase deploy --only firestore:rules,storage,functions
+firebase deploy --project oab-decision-aid --only firestore:rules,storage,functions
 ```
 
 After deployment, use `/admin/data-sources` to confirm that assessment and WhatsApp records are arriving.
+
+If the dashboard reports `Missing or insufficient permissions`, confirm:
+
+1. The clinician document ID exactly matches the lowercase Firebase Authentication email.
+2. The clinician document has `active: true`.
+3. The clinician document has `hospitalId: "esth"` or relies on the legacy `esth` fallback.
+4. The latest `firestore.rules` file has been deployed to `oab-decision-aid`.

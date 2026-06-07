@@ -2,7 +2,6 @@
 
 import {
   collection,
-  collectionGroup,
   doc,
   getDoc,
   onSnapshot,
@@ -106,7 +105,11 @@ export async function verifyClinicianEmail(email: string): Promise<ClinicianAcco
 }
 
 function hospitalIdsForAccount(account: ClinicianAccount): string[] {
-  return [...new Set([account.hospitalId, ...(account.hospitalIds || [])].filter(Boolean) as string[])];
+  const configured = [
+    account.hospitalId,
+    ...(account.hospitalIds || []),
+  ].filter(Boolean) as string[];
+  return [...new Set(configured.length ? configured : ["esth"])];
 }
 
 export function subscribeAssessments(
@@ -127,50 +130,6 @@ export function subscribeAssessments(
   return onSnapshot(
     assessmentQuery,
     (snapshot) => callback(mapSnapshot<PatientAssessment>(snapshot)),
-    onError,
-  );
-}
-
-export function subscribePreClinicQuestionnaires(
-  account: ClinicianAccount,
-  callback: (records: PreClinicQuestionnaire[]) => void,
-  onError?: (error: Error) => void,
-): Unsubscribe {
-  const hospitals = hospitalIdsForAccount(account);
-  const base = collectionGroup(getClientDb(), "preClinicQuestionnaire");
-  const questionnaireQuery =
-    account.role === "super_admin"
-      ? base
-      : hospitals.length === 1
-        ? query(base, where("hospitalId", "==", hospitals[0]))
-        : hospitals.length > 1
-          ? query(base, where("hospitalId", "in", hospitals.slice(0, 10)))
-          : query(base, where("hospitalId", "==", "__no_hospital_access__"));
-  return onSnapshot(
-    questionnaireQuery,
-    (snapshot) => callback(mapSnapshot<PreClinicQuestionnaire>(snapshot)),
-    onError,
-  );
-}
-
-export function subscribeClinicianReviews(
-  account: ClinicianAccount,
-  callback: (records: AssessmentClinicianReview[]) => void,
-  onError?: (error: Error) => void,
-): Unsubscribe {
-  const hospitals = hospitalIdsForAccount(account);
-  const base = collectionGroup(getClientDb(), "clinicianReview");
-  const reviewQuery =
-    account.role === "super_admin"
-      ? base
-      : hospitals.length === 1
-        ? query(base, where("hospitalId", "==", hospitals[0]))
-        : hospitals.length > 1
-          ? query(base, where("hospitalId", "in", hospitals.slice(0, 10)))
-          : query(base, where("hospitalId", "==", "__no_hospital_access__"));
-  return onSnapshot(
-    reviewQuery,
-    (snapshot) => callback(mapSnapshot<AssessmentClinicianReview>(snapshot)),
     onError,
   );
 }

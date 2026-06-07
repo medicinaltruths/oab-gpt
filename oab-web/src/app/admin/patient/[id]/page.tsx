@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import {
   ClinicianReviewForm,
@@ -35,6 +35,14 @@ function Detail({ label, children }: { label: string; children: ReactNode }) {
 
 export default function PatientDetailPage() {
   const params = useParams<{ id: string }>();
+  const searchParams = useSearchParams();
+  const requestedSection = searchParams.get("section");
+  const section =
+    requestedSection === "pre-clinic" ||
+    requestedSection === "post-clinic" ||
+    requestedSection === "clinician-review"
+      ? requestedSection
+      : "overview";
   const { assessments, loading } = useAdminData();
   const assessment = assessments.find((item) => item.assessmentId === params.id);
   const [preClinic, setPreClinic] = useState<PreClinicQuestionnaire | null>(null);
@@ -99,7 +107,37 @@ export default function PatientDetailPage() {
         }
       />
 
-      <section className="grid gap-5 xl:grid-cols-2">
+      <nav
+        aria-label="Assessment sections"
+        className="flex gap-2 overflow-x-auto rounded-2xl border border-white/[0.07] bg-[#07101f]/70 p-2"
+      >
+        {[
+          ["overview", "Assessment overview"],
+          ["pre-clinic", "Pre-clinic questionnaire"],
+          ["clinician-review", "Clinician review"],
+          ["post-clinic", "Post-clinic questionnaire"],
+        ].map(([key, label]) => (
+          <Link
+            key={key}
+            href={
+              key === "overview"
+                ? `/admin/patient/${assessment.assessmentId}`
+                : `/admin/patient/${assessment.assessmentId}?section=${key}`
+            }
+            className={`inline-flex min-h-11 shrink-0 items-center rounded-xl px-4 text-xs font-medium transition ${
+              section === key
+                ? "bg-cyan-200 text-[#031018]"
+                : "text-slate-400 hover:bg-white/[0.05] hover:text-slate-200"
+            }`}
+          >
+            {label}
+          </Link>
+        ))}
+      </nav>
+
+      {section === "overview" ? (
+        <>
+          <section className="grid gap-5 xl:grid-cols-2">
         <Panel title="Assessment">
           <dl className="grid gap-5 p-5 sm:grid-cols-2 sm:p-6">
             <Detail label="Date">{formatDate(assessment.createdAt, true)}</Detail>
@@ -132,9 +170,9 @@ export default function PatientDetailPage() {
             </p>
           </div>
         </Panel>
-      </section>
+          </section>
 
-      <Panel title="PDF Report" description={`Retention expiry: ${formatDate(assessment.reportExpiryDate)}`}>
+          <Panel title="PDF Report" description={`Retention expiry: ${formatDate(assessment.reportExpiryDate)}`}>
         <div className="p-5 sm:p-6">
           {assessment.pdfUrl ? (
             <a
@@ -150,9 +188,9 @@ export default function PatientDetailPage() {
             <p className="text-sm text-slate-500">No report has been generated.</p>
           )}
         </div>
-      </Panel>
+          </Panel>
 
-      <section className="grid gap-5 xl:grid-cols-3">
+          <section className="grid gap-5 xl:grid-cols-3">
         <Panel title="Symptom Summary" className="xl:col-span-1">
           <p className="p-5 text-sm leading-7 text-slate-400 sm:p-6">
             {assessment.symptomSummary || "Not recorded"}
@@ -168,11 +206,19 @@ export default function PatientDetailPage() {
             {assessment.socialFactors || "Not recorded"}
           </p>
         </Panel>
-      </section>
+          </section>
+        </>
+      ) : null}
 
-      <PreClinicQuestionnaireForm assessment={assessment} initialValue={preClinic} />
-      <ClinicianReviewForm assessment={assessment} initialValue={review} />
-      <PostClinicQuestionnaireForm assessment={assessment} initialValue={postClinic} />
+      {section === "pre-clinic" ? (
+        <PreClinicQuestionnaireForm assessment={assessment} initialValue={preClinic} />
+      ) : null}
+      {section === "clinician-review" ? (
+        <ClinicianReviewForm assessment={assessment} initialValue={review} />
+      ) : null}
+      {section === "post-clinic" ? (
+        <PostClinicQuestionnaireForm assessment={assessment} initialValue={postClinic} />
+      ) : null}
     </div>
   );
 }

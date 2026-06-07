@@ -180,10 +180,22 @@ export default function PatientsPage() {
               <div className="mt-5 flex flex-wrap gap-3">
                 <Link
                   href={`/admin/patient/${assessment.assessmentId}`}
-                  className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-cyan-200 px-4 text-xs font-semibold text-[#031018] transition hover:bg-cyan-100"
+                  className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-cyan-200 px-4 text-xs font-semibold text-[#031018] transition hover:bg-cyan-100"
                 >
                   Open assessment
                   <Icon name="arrow" className="size-4" />
+                </Link>
+                <Link
+                  href={`/admin/patient/${assessment.assessmentId}?section=pre-clinic`}
+                  className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl border border-cyan-300/15 bg-cyan-300/[0.06] px-3 text-center text-xs font-medium text-cyan-100 transition hover:bg-cyan-300/[0.11]"
+                >
+                  Pre-clinic questionnaire
+                </Link>
+                <Link
+                  href={`/admin/patient/${assessment.assessmentId}?section=post-clinic`}
+                  className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl border border-violet-300/15 bg-violet-300/[0.06] px-3 text-center text-xs font-medium text-violet-100 transition hover:bg-violet-300/[0.11]"
+                >
+                  Post-clinic questionnaire
                 </Link>
                 {assessment.pdfUrl ? (
                   <a
