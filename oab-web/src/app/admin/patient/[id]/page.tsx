@@ -8,10 +8,18 @@ import {
   PostClinicQuestionnaireForm,
   PreClinicQuestionnaireForm,
 } from "@/components/admin/AssessmentForms";
+import { ClinicianPdfButton } from "@/components/admin/ClinicianPdfButton";
 import { Icon } from "@/components/admin/icons";
 import { useAdminData } from "@/components/admin/useAdminData";
 import { Badge, EmptyState, LoadingState, PageHeader, Panel } from "@/components/admin/ui";
 import {
+  assessmentChannel,
+  assessmentHasPdf,
+  assessmentIsCompleted,
+  assessmentMessageCount,
+  assessmentPdfUrl,
+  assessmentRecommendation,
+  assessmentStoragePath,
   formatDate,
   formatDurationMinutes,
   subscribeAssessmentSubcollection,
@@ -141,14 +149,14 @@ export default function PatientDetailPage() {
         <Panel title="Assessment">
           <dl className="grid gap-5 p-5 sm:grid-cols-2 sm:p-6">
             <Detail label="Date">{formatDate(assessment.createdAt, true)}</Detail>
-            <Detail label="Source">{assessment.source}</Detail>
+            <Detail label="Channel">{assessmentChannel(assessment)}</Detail>
             <Detail label="Completion status">
-              {assessment.conversationCompleted ? "Completed" : "In progress"}
+              {assessmentIsCompleted(assessment) ? "Completed" : "In progress"}
             </Detail>
             <Detail label="Conversation duration">
               {formatDurationMinutes(assessment.conversationDurationMinutes)}
             </Detail>
-            <Detail label="Message count">{assessment.messageCount || 0}</Detail>
+            <Detail label="Message count">{assessmentMessageCount(assessment)}</Detail>
             <Detail label="Patient">
               {[assessment.firstName, assessment.age, assessment.sex]
                 .filter((value) => value !== undefined && value !== null && value !== "")
@@ -160,7 +168,7 @@ export default function PatientDetailPage() {
         <Panel title="AI Recommendation">
           <div className="p-5 sm:p-6">
             <p className="font-[var(--font-display)] text-3xl font-semibold text-[#f8f1d5]">
-              {assessment.recommendedTreatment || "Not recorded"}
+              {assessmentRecommendation(assessment) || "Not recorded"}
             </p>
             <p className="mt-2 text-xs text-slate-500">
               Prompt version {assessment.promptVersion || "Not recorded"}
@@ -172,18 +180,31 @@ export default function PatientDetailPage() {
         </Panel>
           </section>
 
-          <Panel title="PDF Report" description={`Retention expiry: ${formatDate(assessment.reportExpiryDate)}`}>
+          <Panel
+            title="PDF Information"
+            description={`Retained until: ${formatDate(
+              assessment.reportRetentionUntil || assessment.reportExpiryDate,
+            )}`}
+          >
         <div className="p-5 sm:p-6">
-          {assessment.pdfUrl ? (
-            <a
-              href={assessment.pdfUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-cyan-200 px-5 text-sm font-semibold text-[#031018] transition hover:bg-cyan-100"
-            >
-              <Icon name="document" className="size-4" />
-              Open PDF
-            </a>
+          {assessmentHasPdf(assessment) ? (
+            <div className="space-y-4">
+              <ClinicianPdfButton
+                storagePath={assessmentStoragePath(assessment)}
+                fallbackUrl={assessmentPdfUrl(assessment)}
+              />
+              <dl className="grid gap-4 text-xs sm:grid-cols-2">
+                <Detail label="Generated">
+                  {formatDate(
+                    assessment.pdfCreatedAt || assessment.reportCreatedAt,
+                    true,
+                  )}
+                </Detail>
+                <Detail label="Patient link expires">
+                  {formatDate(assessment.pdfDownloadUrlExpiresAt, true)}
+                </Detail>
+              </dl>
+            </div>
           ) : (
             <p className="text-sm text-slate-500">No report has been generated.</p>
           )}
@@ -206,6 +227,23 @@ export default function PatientDetailPage() {
             {assessment.socialFactors || "Not recorded"}
           </p>
         </Panel>
+          </section>
+
+          <section className="grid gap-5 xl:grid-cols-2">
+            <Panel title="Questionnaire Responses">
+              <div className="p-5 text-sm leading-7 text-slate-400 sm:p-6">
+                {preClinic || postClinic
+                  ? "Questionnaire responses are available in the assessment tabs above."
+                  : "No questionnaire responses have been recorded yet."}
+              </div>
+            </Panel>
+            <Panel title="Clinician Review">
+              <div className="p-5 text-sm leading-7 text-slate-400 sm:p-6">
+                {review
+                  ? "A clinician review is available in the Clinician review tab."
+                  : "This assessment has not yet been reviewed by a clinician."}
+              </div>
+            </Panel>
           </section>
         </>
       ) : null}

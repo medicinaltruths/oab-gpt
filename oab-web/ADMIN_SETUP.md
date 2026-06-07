@@ -73,15 +73,24 @@ CHAT_API_URL=https://your-domain.example/api/chat
 
 ## PDF Retention
 
-Generated reports are stored in Firebase Storage with a stable Firebase download-token URL. Each assessment stores:
+Generated reports are retained in Firebase Storage for 365 days. Patients receive a signed URL that expires after 48 hours; clinicians open the retained object through authenticated Firebase Storage access. Each assessment stores:
 
-- `pdfUrl`
-- `storagePath`
-- `reportCreatedAt`
-- `reportExpiryDate`
+- `pdfDownloadUrl` and legacy alias `pdfUrl`
+- `pdfStoragePath` and legacy alias `storagePath`
+- `pdfCreatedAt` and legacy alias `reportCreatedAt`
+- `pdfDownloadUrlExpiresAt`
+- `reportRetentionUntil` and legacy alias `reportExpiryDate`
 - `promptVersion`
 
-`reportExpiryDate` is set to 365 days after report generation. Ensure the Firebase Storage bucket does not have a lifecycle rule that deletes `reports/` objects before 365 days.
+The public URL expiry does not delete the PDF or its Firestore metadata. Ensure the Firebase Storage bucket does not have a lifecycle rule that deletes `reports/` objects before 365 days.
+
+Assessment milestones are written under:
+
+```text
+analytics/events/items/{assessmentId}_{eventType}
+```
+
+Event types are `assessment_started`, `assessment_completed`, `recommendation_generated`, and `pdf_generated`.
 
 ## Deployment
 

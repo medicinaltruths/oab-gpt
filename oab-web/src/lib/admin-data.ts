@@ -91,6 +91,39 @@ export function normalizeRecommendation(value?: string): string {
   return value?.trim() || "Other";
 }
 
+export function assessmentRecommendation(assessment: PatientAssessment): string {
+  return (
+    assessment.recommendationCategory ||
+    assessment.recommendation ||
+    assessment.recommendedTreatment ||
+    ""
+  );
+}
+
+export function assessmentChannel(assessment: PatientAssessment): string {
+  return assessment.channel || (assessment.source === "whatsapp" ? "whatsapp" : "web");
+}
+
+export function assessmentIsCompleted(assessment: PatientAssessment): boolean {
+  return assessment.status === "completed" || assessment.conversationCompleted === true;
+}
+
+export function assessmentHasPdf(assessment: PatientAssessment): boolean {
+  return assessment.pdfGenerated === true || assessment.reportGenerated === true;
+}
+
+export function assessmentMessageCount(assessment: PatientAssessment): number {
+  return assessment.totalMessages ?? assessment.messageCount ?? 0;
+}
+
+export function assessmentPdfUrl(assessment: PatientAssessment): string {
+  return assessment.pdfDownloadUrl || assessment.pdfUrl || "";
+}
+
+export function assessmentStoragePath(assessment: PatientAssessment): string {
+  return assessment.pdfStoragePath || assessment.storagePath || "";
+}
+
 async function findClinicianAccount(email: string): Promise<ClinicianAccount | null> {
   const normalized = email.trim().toLowerCase();
   const snapshot = await getDoc(doc(getClientDb(), "clinician_accounts", normalized));
@@ -212,10 +245,10 @@ export async function saveAssessmentClinicianReview(
       ...writableFields(review),
       assessmentId: assessment.assessmentId,
       hospitalId: assessment.hospitalId,
-      aiTreatment: assessment.recommendedTreatment || "",
+      aiTreatment: assessmentRecommendation(assessment),
       concordance:
         normalizeRecommendation(review.clinicianTreatment) ===
-        normalizeRecommendation(assessment.recommendedTreatment),
+        normalizeRecommendation(assessmentRecommendation(assessment)),
       reviewedBy: clinician.displayName || clinician.email,
       reviewedByEmail: clinician.email,
       reviewDate: review.reviewDate || serverTimestamp(),
@@ -225,6 +258,13 @@ export async function saveAssessmentClinicianReview(
   );
   await updateDoc(doc(getClientDb(), "patient_assessments", assessment.assessmentId), {
     reviewStatus: "reviewed",
+    clinicianRecommendation: review.clinicianTreatment || null,
+    clinicianComments: review.discordanceReason || "",
+    clinicianReviewed: true,
+    clinicianReviewedAt: serverTimestamp(),
+    concordance:
+      normalizeRecommendation(review.clinicianTreatment) ===
+      normalizeRecommendation(assessmentRecommendation(assessment)),
     updatedAt: serverTimestamp(),
   });
 }
@@ -247,7 +287,8 @@ function buildRecommendationDistribution(assessments: PatientAssessment[]): Reco
   return ["PTNS", "Botox", "SNM", "Medication", "Conservative"].map((label) => ({
     label,
     value: assessments.filter(
-      (assessment) => normalizeRecommendation(assessment.recommendedTreatment) === label,
+      (assessment) =>
+        normalizeRecommendation(assessmentRecommendation(assessment)) === label,
     ).length,
     color: RECOMMENDATION_COLORS[label],
   }));
@@ -255,9 +296,9 @@ function buildRecommendationDistribution(assessments: PatientAssessment[]): Reco
 
 function buildFunnel(assessments: PatientAssessment[]): FunnelDatum[] {
   return [
-    { label: "Started", value: assessments.filter((item) => item.conversationStarted).length },
-    { label: "Completed", value: assessments.filter((item) => item.conversationCompleted).length },
-    { label: "Generated PDF", value: assessments.filter((item) => item.reportGenerated).length },
+    { label: "Started", value: assessments.length },
+    { label: "Completed", value: assessments.filter(assessmentIsCompleted).length },
+    { label: "Generated PDF", value: assessments.filter(assessmentHasPdf).length },
   ];
 }
 
@@ -282,7 +323,9 @@ function buildConcordance(
   const groups = new Map<string, AnalyticsSnapshot["concordance"][number]>();
   reviews.forEach((review) => {
     const assessment = review.assessmentId ? assessmentMap.get(review.assessmentId) : undefined;
-    const ai = normalizeRecommendation(review.aiTreatment || assessment?.recommendedTreatment);
+    const ai = normalizeRecommendation(
+      review.aiTreatment || (assessment ? assessmentRecommendation(assessment) : ""),
+    );
     const clinician = normalizeRecommendation(review.clinicianTreatment);
     if (!review.clinicianTreatment) return;
     const concordance = ai === clinician;
@@ -303,10 +346,21 @@ export function buildAnalytics(
   questionnaires: PreClinicQuestionnaire[] = [],
   reviews: AssessmentClinicianReview[] = [],
 ): AnalyticsSnapshot {
-  const started = assessments.filter((item) => item.conversationStarted);
-  const completed = assessments.filter((item) => item.conversationCompleted);
-  const reports = assessments.filter((item) => item.reportGenerated);
+  const started = assessments;
+  const completed = assessments.filter(assessmentIsCompleted);
+  const reports = assessments.filter(assessmentHasPdf);
   const funnel = buildFunnel(assessments);
+  const channelDistribution: RecommendationDatum[] = [
+    { label: "Website", value: 0, color: "#55d8e6" },
+    { label: "WhatsApp", value: 0, color: "#7dd3a8" },
+  ].map((item) => ({
+    ...item,
+    value: assessments.filter((assessment) =>
+      item.label === "WhatsApp"
+        ? assessmentChannel(assessment) === "whatsapp"
+        : assessmentChannel(assessment) === "web",
+    ).length,
+  }));
   return {
     metrics: {
       conversationsStarted: started.length,
@@ -321,17 +375,22 @@ export function buildAnalytics(
       ),
     },
     recommendationDistribution: buildRecommendationDistribution(assessments),
+    channelDistribution,
     funnel,
     weeklyTrend: buildWeeklyTrend(assessments),
     pdfGenerationRate: completed.length ? (reports.length / completed.length) * 100 : 0,
-    averageMessages: average(assessments.map((item) => item.messageCount)),
+    averageMessages: average(assessments.map(assessmentMessageCount)),
     dropOff: [
       { label: "Started but not completed", value: Math.max(0, started.length - completed.length) },
       { label: "Completed without PDF", value: Math.max(0, completed.length - reports.length) },
     ],
     concordance: buildConcordance(assessments, reviews),
-    pendingReviews: assessments.filter((item) => item.reviewStatus !== "reviewed").length,
-    reviewedAssessments: assessments.filter((item) => item.reviewStatus === "reviewed").length,
+    pendingReviews: assessments.filter(
+      (item) => item.reviewStatus !== "reviewed" && item.clinicianReviewed !== true,
+    ).length,
+    reviewedAssessments: assessments.filter(
+      (item) => item.reviewStatus === "reviewed" || item.clinicianReviewed === true,
+    ).length,
   };
 }
 

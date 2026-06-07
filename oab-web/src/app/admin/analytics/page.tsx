@@ -50,6 +50,9 @@ export default function AnalyticsPage() {
         <Panel title="Recommendation Distribution" description={`${assessments.length} total assessments`}>
           <DonutChart data={analytics.recommendationDistribution} />
         </Panel>
+        <Panel title="Channel Distribution" description="Website and WhatsApp assessments">
+          <DonutChart data={analytics.channelDistribution} />
+        </Panel>
         <Panel title="Completion Funnel" description={`${(completed * 100).toFixed(1)}% reached PDF generation`}>
           <FunnelChart data={analytics.funnel} />
         </Panel>

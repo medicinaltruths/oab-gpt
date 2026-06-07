@@ -10,11 +10,12 @@ const corsMW = require("cors");
 const { PDFDocument, rgb, StandardFonts } = require("pdf-lib");
 const { randomUUID } = require("crypto");
 
-const BUILD_TAG = "generateSummaryPdf v5 (2026-06-05)";
+const BUILD_TAG = "generateSummaryPdf v6 (2026-06-07)";
 
 // ===== Configure =====
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "*"; // e.g. "https://oab.yourdomain.com"
 const REPORT_RETENTION_DAYS = 365;
+const PUBLIC_REPORT_LINK_HOURS = 48;
 const DEFAULT_HOSPITAL_ID = process.env.DEFAULT_HOSPITAL_ID || "esth";
 const TWILIO_WHATSAPP_MODE =
   (process.env.TWILIO_WHATSAPP_MODE || "sandbox").toLowerCase();
@@ -85,6 +86,43 @@ function createAssessmentId() {
   return `OAB-${year}-${timestamp}${random}`;
 }
 
+function normalizeRecommendation(value) {
+  const normalized = String(value || "").toLowerCase();
+  if (normalized.includes("ptns") || normalized.includes("tibial")) return "PTNS";
+  if (normalized.includes("botox") || normalized.includes("botulinum")) return "Botox";
+  if (normalized.includes("snm") || normalized.includes("sacral")) return "SNM";
+  if (normalized.includes("medication") || normalized.includes("medicine")) {
+    return "Medication";
+  }
+  if (
+    normalized.includes("conservative") ||
+    normalized.includes("bladder training") ||
+    normalized.includes("lifestyle")
+  ) {
+    return "Conservative";
+  }
+  return String(value || "").trim() || "Other";
+}
+
+function analyticsEventRef(assessmentId, type) {
+  return db.collection("analytics")
+    .doc("events")
+    .collection("items")
+    .doc(`${assessmentId}_${type}`);
+}
+
+function analyticsEventData(options) {
+  return {
+    type: options.type,
+    assessmentId: options.assessmentId,
+    sessionId: options.sessionId || null,
+    hospitalId: options.hospitalId || DEFAULT_HOSPITAL_ID,
+    channel: options.channel || "web",
+    recommendation: options.recommendation || null,
+    timestamp: admin.firestore.FieldValue.serverTimestamp(),
+  };
+}
+
 async function ensureWhatsappAssessment(options) {
   const existingId = String(options.assessmentId || "").trim();
   if (existingId) {
@@ -103,23 +141,52 @@ async function ensureWhatsappAssessment(options) {
   const assessmentId = createAssessmentId();
   const ref = db.collection("patient_assessments").doc(assessmentId);
   const now = admin.firestore.FieldValue.serverTimestamp();
-  await ref.set({
+  const hospitalId = options.hospitalId || DEFAULT_HOSPITAL_ID;
+  const batch = db.batch();
+  batch.set(ref, {
     assessmentId,
-    hospitalId: options.hospitalId || DEFAULT_HOSPITAL_ID,
+    hospitalId,
     source: "whatsapp",
+    channel: "whatsapp",
     firstName: options.firstName || null,
     conversationStarted: true,
     conversationCompleted: false,
+    status: "in_progress",
+    totalMessages: 0,
     messageCount: 0,
     conversationDurationMinutes: 0,
+    pdfGenerated: false,
     reportGenerated: false,
+    recommendation: null,
+    recommendationCategory: null,
+    alternativeRecommendations: [],
+    pdfStoragePath: "",
+    pdfDownloadUrl: "",
     promptVersion: "V15",
     reviewStatus: "pending",
+    clinicianRecommendation: null,
+    clinicianComments: "",
+    clinicianReviewed: false,
+    clinicianReviewedAt: null,
+    preClinicQuestionnaire: null,
+    postClinicQuestionnaire: null,
+    concordance: null,
     sessionId: options.sessionId || null,
     whatsappContactId: options.contactId || null,
     createdAt: now,
     updatedAt: now,
   });
+  batch.set(
+    analyticsEventRef(assessmentId, "assessment_started"),
+    analyticsEventData({
+      type: "assessment_started",
+      assessmentId,
+      sessionId: options.sessionId,
+      hospitalId,
+      channel: "whatsapp",
+    })
+  );
+  await batch.commit();
   return {assessmentId, ref, snapshot: null, created: true};
 }
 
@@ -277,7 +344,8 @@ function buildWhatsappPrompt(options) {
   const prefix =
     "Context: the user is messaging via WhatsApp. Reply in plain text only, " +
     "suitable for WhatsApp, concise, warm, and easy to read. Avoid markdown, " +
-    "avoid emojis, avoid markdown tables, and keep the reply under 900 characters " +
+    "avoid emojis except the document icon in a generated report message, " +
+    "avoid markdown tables, and keep the reply under 900 characters " +
     "unless the user explicitly asks for more detail.";
   const nameLine =
     !hasExistingThread && contactName
@@ -285,6 +353,16 @@ function buildWhatsappPrompt(options) {
       : "";
 
   return [prefix, nameLine, `User message: ${userMessage}`].filter(Boolean).join("\n\n");
+}
+
+function buildWhatsappReportReply(url) {
+  return (
+    "Your report is ready.\n\n" +
+    "📄 Download your report:\n\n" +
+    `${url}\n\n` +
+    "This link expires in 48 hours.\n\n" +
+    "Is there anything else I can help with today?"
+  );
 }
 
 async function postToChatApi(payload) {
@@ -660,12 +738,21 @@ exports.generateSummaryPdf = onRequest(async (req, res) => {
 
       const payload = {
         patientName: coerceText(body.patientName),
+        patientAge: Number.isFinite(Number(body.patientAge)) ?
+          Number(body.patientAge) :
+          null,
+        patientSex: isString(body.patientSex) ? body.patientSex.trim() : null,
         symptomSummary: coerceText(body.symptomSummary),
         previousTreatments: coerceText(body.previousTreatments),
         socialFactors: coerceText(body.socialFactors),
         treatmentRecommended: coerceText(body.treatmentRecommended),
         treatmentExplanation: coerceText(body.treatmentExplanation),
         questionsForDoctor: coerceText(body.questionsForDoctor),
+        alternativeRecommendations: Array.isArray(body.alternativeRecommendations) ?
+          body.alternativeRecommendations
+            .map((item) => String(item || "").trim())
+            .filter(Boolean) :
+          [],
       };
       const assessmentId = isString(body.assessmentId) ? body.assessmentId.trim() : "";
       let hospitalId = isString(body.hospitalId) ?
@@ -691,7 +778,8 @@ exports.generateSummaryPdf = onRequest(async (req, res) => {
         const ownerAuthorized =
           uid && assessmentData.ownerUid && assessmentData.ownerUid === uid;
         const whatsappAuthorized =
-          assessmentData.source === "whatsapp" &&
+          (assessmentData.channel === "whatsapp" ||
+            assessmentData.source === "whatsapp") &&
           assessmentData.sessionId &&
           assessmentData.sessionId === body.sessionId;
 
@@ -717,36 +805,54 @@ exports.generateSummaryPdf = onRequest(async (req, res) => {
           contentType: "application/pdf",
           cacheControl: "private, max-age=3600",
           metadata: {
-            firebaseStorageDownloadTokens: randomUUID(),
             assessmentId: assessmentId || "",
             hospitalId: hospitalId,
             reportRetentionDays: String(REPORT_RETENTION_DAYS),
+            publicLinkHours: String(PUBLIC_REPORT_LINK_HOURS),
           },
         },
         resumable: false,
       });
 
-      const [metadata] = await file.getMetadata();
-      const token = metadata.metadata && metadata.metadata.firebaseStorageDownloadTokens;
-      const expiresAt = now + REPORT_RETENTION_DAYS * 24 * 60 * 60 * 1000;
-      const url = token ?
-        `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket.name)}` +
-          `/o/${encodeURIComponent(path)}?alt=media&token=${encodeURIComponent(token)}` :
-        null;
+      const expiresAt = now + PUBLIC_REPORT_LINK_HOURS * 60 * 60 * 1000;
+      const retentionUntil = now + REPORT_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+      const [url] = await file.getSignedUrl({
+        action: "read",
+        expires: new Date(expiresAt),
+      });
 
       if (assessmentRef) {
-        await assessmentRef.set({
+        const recommendation = payload.treatmentRecommended;
+        const recommendationCategory = normalizeRecommendation(recommendation);
+        const assessmentSnapshot = await assessmentRef.get();
+        const assessmentData = assessmentSnapshot.data() || {};
+        const channel = assessmentData.channel ||
+          (assessmentData.source === "whatsapp" ? "whatsapp" : "web");
+        const batch = db.batch();
+        batch.set(assessmentRef, {
           assessmentId,
           hospitalId,
           firstName: payload.patientName === "Not provided" ? null : payload.patientName,
+          age: payload.patientAge,
+          sex: payload.patientSex,
           conversationCompleted: true,
+          status: "completed",
           completedAt: admin.firestore.FieldValue.serverTimestamp(),
+          pdfGenerated: true,
           reportGenerated: true,
+          pdfDownloadUrl: url,
+          pdfStoragePath: path,
+          pdfCreatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          pdfDownloadUrlExpiresAt: admin.firestore.Timestamp.fromMillis(expiresAt),
+          reportRetentionUntil: admin.firestore.Timestamp.fromMillis(retentionUntil),
           pdfUrl: url,
           storagePath: path,
           reportCreatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          reportExpiryDate: admin.firestore.Timestamp.fromMillis(expiresAt),
-          recommendedTreatment: payload.treatmentRecommended,
+          reportExpiryDate: admin.firestore.Timestamp.fromMillis(retentionUntil),
+          recommendation,
+          recommendationCategory,
+          alternativeRecommendations: payload.alternativeRecommendations,
+          recommendedTreatment: recommendation,
           recommendationRationale: payload.treatmentExplanation,
           symptomSummary: payload.symptomSummary,
           previousTreatments: payload.previousTreatments,
@@ -754,29 +860,39 @@ exports.generateSummaryPdf = onRequest(async (req, res) => {
           promptVersion,
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         }, {merge: true});
+        [
+          "assessment_completed",
+          "recommendation_generated",
+          "pdf_generated",
+        ].forEach((type) => {
+          batch.set(
+            analyticsEventRef(assessmentId, type),
+            analyticsEventData({
+              type,
+              assessmentId,
+              sessionId,
+              hospitalId,
+              channel,
+              recommendation:
+                type === "recommendation_generated" ? recommendationCategory : null,
+            }),
+            {merge: true}
+          );
+        });
+        await batch.commit();
       }
 
-      // Return a Firebase download-token URL and the storage path.
-      if (uid) {
-        return res.status(200).json({
-          ok: true,
-          mode: "storage",
-          storagePath: path,
-          downloadUrl: url,
-          expiresAt: expiresAt,
-          build: BUILD_TAG,
-          message: "Stored in Firebase Storage with a 12-month assessment retention window.",
-        });
-      } else {
-        return res.status(200).json({
-          ok: true,
-          mode: "signed-url",
-          downloadUrl: url,
-          expiresAt: expiresAt,
-          build: BUILD_TAG,
-          message: "Stored in Firebase Storage with a 12-month assessment retention window.",
-        });
-      }
+      return res.status(200).json({
+        ok: true,
+        mode: "signed-url",
+        storagePath: path,
+        downloadUrl: url,
+        expiresAt,
+        retentionUntil,
+        build: BUILD_TAG,
+        message:
+          "Public link expires in 48 hours; report storage is retained for 12 months.",
+      });
     } catch (err) {
       const msg = (err && err.message) ? err.message : String(err);
       console.error("generateSummaryPdf error:", msg);
@@ -1036,10 +1152,25 @@ exports.processWhatsappInboundMessage = onDocumentCreated(
         sessionId: sessionId,
         assessmentId: assessment.assessmentId,
         hospitalId: hospitalId,
+        channel: "whatsapp",
       });
 
-      const reply = formatReplyForWhatsapp(chatResult.reply ||
-        "I'm sorry, but I hit a technical problem just now. Please try again.");
+      const reportUrl = isString(chatResult.downloadUrl) ?
+        String(chatResult.downloadUrl).trim() :
+        (
+          chatResult.assessmentUpdate &&
+          isString(chatResult.assessmentUpdate.pdfUrl) ?
+            String(chatResult.assessmentUpdate.pdfUrl).trim() :
+            ""
+        );
+      const reply = formatReplyForWhatsapp(
+        reportUrl ?
+          buildWhatsappReportReply(reportUrl) :
+          (
+            chatResult.reply ||
+            "I'm sorry, but I hit a technical problem just now. Please try again."
+          )
+      );
       const nextThreadId = isString(chatResult.threadId) ?
         String(chatResult.threadId).trim() :
         "";
@@ -1064,6 +1195,7 @@ exports.processWhatsappInboundMessage = onDocumentCreated(
       await assessment.ref.set({
         firstName: contactName || assessmentData.firstName || null,
         openAiResponseId: nextThreadId || effectiveResponseId || null,
+        totalMessages: admin.firestore.FieldValue.increment(2),
         messageCount: admin.firestore.FieldValue.increment(2),
         conversationDurationMinutes: Math.max(
           0,

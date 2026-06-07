@@ -6,6 +6,7 @@ type PdfFunctionResult = {
   storagePath?: string;
   error?: unknown;
   expiresAt?: number;
+  retentionUntil?: number;
 };
 
 type AssessmentUpdate = {
@@ -14,6 +15,8 @@ type AssessmentUpdate = {
   sex?: string;
   conversationCompleted?: boolean;
   recommendedTreatment?: string;
+  recommendationCategory?: string;
+  alternativeRecommendations?: string[];
   recommendationRationale?: string;
   symptomSummary?: string;
   previousTreatments?: string;
@@ -21,6 +24,8 @@ type AssessmentUpdate = {
   reportGenerated?: boolean;
   pdfUrl?: string;
   storagePath?: string;
+  pdfDownloadUrlExpiresAt?: number;
+  reportRetentionUntil?: number;
   reportExpiryDate?: number;
   promptVersion?: string;
 };
@@ -84,6 +89,24 @@ function isSendLinkRequest(text: string): boolean {
   );
 }
 
+function normalizeRecommendationCategory(value: string): string {
+  const normalized = value.toLowerCase();
+  if (normalized.includes("ptns") || normalized.includes("tibial")) return "PTNS";
+  if (normalized.includes("botox") || normalized.includes("botulinum")) return "Botox";
+  if (normalized.includes("snm") || normalized.includes("sacral")) return "SNM";
+  if (normalized.includes("medication") || normalized.includes("medicine")) {
+    return "Medication";
+  }
+  if (
+    normalized.includes("conservative") ||
+    normalized.includes("bladder training") ||
+    normalized.includes("lifestyle")
+  ) {
+    return "Conservative";
+  }
+  return value.trim() || "Other";
+}
+
 function extractUrls(text: string): string[] {
   if (!text) return [];
   const urls: string[] = [];
@@ -109,6 +132,10 @@ function parsePdfFunctionResult(raw: string): PdfFunctionResult | null {
       error: data.error,
       expiresAt:
         typeof data.expiresAt === "number" ? data.expiresAt : undefined,
+      retentionUntil:
+        typeof data.retentionUntil === "number"
+          ? data.retentionUntil
+          : undefined,
     };
   } catch {
     return null;
@@ -228,6 +255,12 @@ function buildResponsesTools() {
             description:
               "Why this recommendation suits their case, including benefits, trade-offs, and logistics.",
           },
+          alternative_recommendations: {
+            type: "array",
+            items: { type: "string" },
+            description:
+              "Other reasonable treatment options discussed with the patient.",
+          },
           questions_for_doctor: {
             type: "string",
             description:
@@ -303,11 +336,18 @@ async function executeGenerateSummaryPdf(
         ? args.thread_id
         : options.traceId,
     patientName: String(args.patient_name ?? ""),
+    patientAge:
+      typeof args.patient_age === "number" ? args.patient_age : undefined,
+    patientSex:
+      typeof args.patient_sex === "string" ? args.patient_sex : undefined,
     symptomSummary: String(args.symptom_summary ?? ""),
     previousTreatments: String(args.previous_treatments ?? ""),
     socialFactors: String(args.social_factors ?? ""),
     treatmentRecommended: String(args.treatment_recommended ?? ""),
     treatmentExplanation: String(args.treatment_explanation ?? ""),
+    alternativeRecommendations: Array.isArray(args.alternative_recommendations)
+      ? args.alternative_recommendations.map(String)
+      : [],
     questionsForDoctor: String(args.questions_for_doctor ?? ""),
     sessionId: options.sessionId || `responses-${Date.now()}`,
     assessmentId: options.assessmentId,
@@ -431,26 +471,18 @@ function extractPdfResultFromToolOutput(output: string): PdfFunctionResult | nul
   return parsePdfFunctionResult(output);
 }
 
-function buildFallbackReply(url: string): string {
+function buildReportReply(url: string, channel: "web" | "whatsapp"): string {
+  if (channel === "whatsapp") {
+    return (
+      `Your report is ready.\n\n` +
+      `📄 Download your report:\n\n${url}\n\n` +
+      `This link expires in 48 hours.\n\n` +
+      `Is there anything else I can help with today?`
+    );
+  }
   return (
-    `Ok, I've created your report! You can download it here:\n\n` +
-    `[Download your report here.](${url})\n\n` +
-    `Your report will be retained securely for 12 months.\n\n` +
-    `Is there anything else you'd like me to assist you with?\n\n`
-  );
-}
-
-function soundsLikePdfFailure(text: string): boolean {
-  const t = text.toLowerCase();
-  return (
-    /server error/.test(t) ||
-    /technical problem/.test(t) ||
-    /tried to create/.test(t) ||
-    /couldn't create/.test(t) ||
-    /could not create/.test(t) ||
-    /try generating the pdf again/.test(t) ||
-    /paste the full written report/.test(t) ||
-    /downloadable pdf three times/.test(t)
+    `Your report is ready.\n\n` +
+    `Use the download button below. The patient download link expires in 48 hours.`
   );
 }
 
@@ -464,6 +496,7 @@ export async function POST(req: Request) {
       firebaseIdToken?: string | null;
       assessmentId?: string | null;
       hospitalId?: string | null;
+      channel?: "web" | "whatsapp" | null;
     };
 
     const prompt = String(body.prompt ?? "");
@@ -481,6 +514,7 @@ export async function POST(req: Request) {
       typeof body.hospitalId === "string" && body.hospitalId.trim()
         ? body.hospitalId.trim()
         : "esth";
+    const channel = body.channel === "whatsapp" ? "whatsapp" : "web";
 
     if (threadId === "null" || threadId === "undefined") threadId = "";
     if (threadId.startsWith("thread_")) threadId = "";
@@ -619,6 +653,17 @@ export async function POST(req: Request) {
               typeof toolArgs.treatment_recommended === "string"
                 ? toolArgs.treatment_recommended.trim()
                 : undefined,
+            recommendationCategory:
+              typeof toolArgs.treatment_recommended === "string"
+                ? normalizeRecommendationCategory(
+                    toolArgs.treatment_recommended.trim(),
+                  )
+                : undefined,
+            alternativeRecommendations: Array.isArray(
+              toolArgs.alternative_recommendations,
+            )
+              ? toolArgs.alternative_recommendations.map(String)
+              : [],
             recommendationRationale:
               typeof toolArgs.treatment_explanation === "string"
                 ? toolArgs.treatment_explanation.trim()
@@ -638,7 +683,9 @@ export async function POST(req: Request) {
             reportGenerated: parsedResult.ok === true,
             pdfUrl: parsedResult.downloadUrl,
             storagePath: parsedResult.storagePath,
-            reportExpiryDate: parsedResult.expiresAt,
+            pdfDownloadUrlExpiresAt: parsedResult.expiresAt,
+            reportRetentionUntil: parsedResult.retentionUntil,
+            reportExpiryDate: parsedResult.retentionUntil,
             promptVersion: `V${RESPONSE_PROMPT_VERSION}`,
           };
         }
@@ -676,9 +723,13 @@ export async function POST(req: Request) {
       if (lastToolResult?.downloadUrl) {
         return new Response(
           JSON.stringify({
-            reply: buildFallbackReply(String(lastToolResult.downloadUrl)),
+            reply: buildReportReply(
+              String(lastToolResult.downloadUrl),
+              channel,
+            ),
             threadId: response.id || threadId,
             assessmentUpdate,
+            downloadUrl: lastToolResult.downloadUrl,
           }),
           { status: 200 }
         );
@@ -701,21 +752,8 @@ export async function POST(req: Request) {
       lastToolResult?.downloadUrl || priorUrl || ""
     );
 
-    if (canonicalUrl && finalReply && soundsLikePdfFailure(finalReply)) {
-      finalReply = buildFallbackReply(canonicalUrl);
-    }
-
-    if (canonicalUrl && finalReply) {
-      const urls = extractUrls(finalReply);
-      if (!urls.length && /download|report/i.test(finalReply)) {
-        finalReply =
-          `${finalReply.trim()}\n\n` +
-          `[Download your report here.](${canonicalUrl})`;
-      }
-    }
-
-    if (!finalReply && canonicalUrl) {
-      finalReply = buildFallbackReply(canonicalUrl);
+    if (canonicalUrl) {
+      finalReply = buildReportReply(canonicalUrl, channel);
     }
     if (!finalReply && lastToolResult?.storagePath) {
       finalReply =
@@ -733,6 +771,7 @@ export async function POST(req: Request) {
         reply: finalReply,
         threadId: finalThreadId,
         assessmentUpdate,
+        downloadUrl: canonicalUrl || undefined,
       }),
       { status: 200 }
     );

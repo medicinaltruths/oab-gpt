@@ -4,6 +4,7 @@ import Image from "next/image";
 import ReactMarkdown from "react-markdown";
 import QRCode from "qrcode";
 import { ClinicianLoginModal } from "@/components/ClinicianLoginModal";
+import { DownloadCard } from "@/components/DownloadCard";
 import { ensureAnonIdToken } from "@/lib/firebase";
 import {
   clearCurrentAssessment,
@@ -18,7 +19,11 @@ const CHAT_SESSION_KEY = "oab_chat_session_id";
 const LAST_ACTIVITY_KEY = "oab_last_activity";
 const THREAD_IDLE_MS = 45 * 60 * 1000; // 45 minutes: start a fresh thread after inactivity
 
-type Message = { role: "user" | "assistant"; content: string };
+type Message = {
+  role: "user" | "assistant";
+  content: string;
+  downloadUrl?: string;
+};
 
 const WHATSAPP_NAME_KEY = "oab_whatsapp_name";
 const WHATSAPP_PHONE_KEY = "oab_whatsapp_phone";
@@ -734,6 +739,7 @@ function ChatPane() {
           firebaseIdToken: firebaseIdToken || undefined,
           assessmentId: assessmentId || undefined,
           hospitalId: getDefaultHospitalId(),
+          channel: "web",
         }),
       });
 
@@ -742,6 +748,7 @@ function ChatPane() {
         reply?: string;
         reason?: string;
         assessmentUpdate?: AssessmentApiUpdate;
+        downloadUrl?: string;
       } = await res.json();
       const replyText = data.reply || "…";
 
@@ -768,6 +775,7 @@ function ChatPane() {
                   firebaseIdToken: firebaseIdToken || undefined,
                   assessmentId: assessmentId || undefined,
                   hospitalId: getDefaultHospitalId(),
+                  channel: "web",
                 }),
               });
 
@@ -775,6 +783,7 @@ function ChatPane() {
                 threadId?: string;
                 reply?: string;
                 assessmentUpdate?: AssessmentApiUpdate;
+                downloadUrl?: string;
               };
 
               if (retryData.threadId && retryData.threadId !== threadId) {
@@ -788,7 +797,11 @@ function ChatPane() {
               if (retryData.reply) {
                 setMessages((prev) => [
                   ...prev,
-                  { role: "assistant", content: retryData.reply as string },
+                  {
+                    role: "assistant",
+                    content: retryData.reply as string,
+                    downloadUrl: retryData.downloadUrl,
+                  },
                 ]);
               }
               if (assessmentId) {
@@ -812,7 +825,11 @@ function ChatPane() {
 
       setMessages((m) => [
         ...m,
-        { role: "assistant", content: replyText },
+        {
+          role: "assistant",
+          content: replyText,
+          downloadUrl: data.downloadUrl,
+        },
       ]);
       if (assessmentId) {
         await recordAssessmentExchange(assessmentId, data.assessmentUpdate).catch(
@@ -929,6 +946,13 @@ function ChatPane() {
                       >
                         {normalizeAssistantText(m.content)}
                       </ReactMarkdown>
+                      {m.downloadUrl ? (
+                        <DownloadCard
+                          title="Your report is ready"
+                          buttonText="Download PDF Report"
+                          url={m.downloadUrl}
+                        />
+                      ) : null}
                     </div>
                   </div>
                 </div>

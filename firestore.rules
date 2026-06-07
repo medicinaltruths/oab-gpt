@@ -84,6 +84,16 @@ service cloud.firestore {
       }
     }
 
+    match /analytics/events/items/{eventId} {
+      allow create: if request.auth != null &&
+        request.resource.data.ownerUid == request.auth.uid &&
+        request.resource.data.hospitalId is string &&
+        request.resource.data.assessmentId is string &&
+        request.resource.data.type == "assessment_started";
+      allow read: if canAccessHospital(resource.data.hospitalId);
+      allow update, delete: if false;
+    }
+
     // Compatibility for deployed dashboard collection-group listeners.
     match /{path=**}/preClinicQuestionnaire/{documentId} {
       allow read: if

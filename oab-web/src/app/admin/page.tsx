@@ -67,6 +67,12 @@ export default function AdminDashboardPage() {
           icon="check"
           accent="gold"
         />
+        <KpiCard
+          label="Average Messages"
+          value={analytics.averageMessages.toFixed(1)}
+          icon="activity"
+          accent="violet"
+        />
       </section>
 
       <section className="grid gap-5 xl:grid-cols-2">
@@ -75,6 +81,9 @@ export default function AdminDashboardPage() {
         </Panel>
         <Panel title="Conversation Funnel" description="Progression through the structured assessment">
           <FunnelChart data={analytics.funnel} />
+        </Panel>
+        <Panel title="Channel Distribution" description="Assessments started on website and WhatsApp">
+          <DonutChart data={analytics.channelDistribution} />
         </Panel>
       </section>
 

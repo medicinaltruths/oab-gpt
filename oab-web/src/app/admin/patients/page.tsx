@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { Icon } from "@/components/admin/icons";
+import { ClinicianPdfButton } from "@/components/admin/ClinicianPdfButton";
 import { useAdminData } from "@/components/admin/useAdminData";
 import {
   Badge,
@@ -12,7 +13,16 @@ import {
   PageHeader,
   Panel,
 } from "@/components/admin/ui";
-import { formatDate, normalizeRecommendation, toDate } from "@/lib/admin-data";
+import {
+  assessmentHasPdf,
+  assessmentIsCompleted,
+  assessmentPdfUrl,
+  assessmentRecommendation,
+  assessmentStoragePath,
+  formatDate,
+  normalizeRecommendation,
+  toDate,
+} from "@/lib/admin-data";
 
 export default function PatientsPage() {
   const { assessments, loading } = useAdminData();
@@ -26,7 +36,7 @@ export default function PatientsPage() {
     const searchTerm = search.trim().toLowerCase();
     return [...assessments]
       .filter((assessment) => {
-        const treatment = normalizeRecommendation(assessment.recommendedTreatment);
+        const treatment = normalizeRecommendation(assessmentRecommendation(assessment));
         const assessmentDate = toDate(assessment.createdAt);
         if (
           searchTerm &&
@@ -164,15 +174,33 @@ export default function PatientsPage() {
                   <dd className="mt-1 font-medium text-slate-300">{assessment.age ?? "—"}</dd>
                 </div>
                 <div>
+                  <dt className="text-slate-600">Sex</dt>
+                  <dd className="mt-1 font-medium text-slate-300">
+                    {assessment.sex || "Not recorded"}
+                  </dd>
+                </div>
+                <div>
                   <dt className="text-slate-600">Date</dt>
                   <dd className="mt-1 font-medium text-slate-300">
                     {formatDate(assessment.createdAt)}
                   </dd>
                 </div>
+                <div>
+                  <dt className="text-slate-600">Completion</dt>
+                  <dd className="mt-1 font-medium text-slate-300">
+                    {assessmentIsCompleted(assessment) ? "Completed" : "In progress"}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-slate-600">PDF</dt>
+                  <dd className="mt-1 font-medium text-slate-300">
+                    {assessmentHasPdf(assessment) ? "Generated" : "Not generated"}
+                  </dd>
+                </div>
                 <div className="col-span-2">
                   <dt className="text-slate-600">AI recommendation</dt>
                   <dd className="mt-1 font-medium text-cyan-100">
-                    {assessment.recommendedTreatment || "Not yet recorded"}
+                    {assessmentRecommendation(assessment) || "Not yet recorded"}
                   </dd>
                 </div>
               </dl>
@@ -197,16 +225,12 @@ export default function PatientsPage() {
                 >
                   Post-clinic questionnaire
                 </Link>
-                {assessment.pdfUrl ? (
-                  <a
-                    href={assessment.pdfUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-white/10 px-4 text-xs font-medium text-slate-300 transition hover:border-cyan-200/25 hover:text-cyan-100"
-                  >
-                    <Icon name="document" className="size-4" />
-                    Open PDF
-                  </a>
+                {assessmentHasPdf(assessment) ? (
+                  <ClinicianPdfButton
+                    storagePath={assessmentStoragePath(assessment)}
+                    fallbackUrl={assessmentPdfUrl(assessment)}
+                    className="border border-white/10 bg-transparent px-4 text-xs font-medium text-slate-300 hover:border-cyan-200/25 hover:bg-transparent hover:text-cyan-100"
+                  />
                 ) : null}
               </div>
             </article>

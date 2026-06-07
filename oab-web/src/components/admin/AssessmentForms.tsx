@@ -5,6 +5,7 @@ import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
 import { Icon } from "@/components/admin/icons";
 import { Badge, fieldClass, FieldLabel, Panel } from "@/components/admin/ui";
 import {
+  assessmentRecommendation,
   normalizeRecommendation,
   saveAssessmentClinicianReview,
   savePostClinicQuestionnaire,
@@ -347,7 +348,7 @@ export function ClinicianReviewForm({
   const concordant =
     Boolean(value.clinicianTreatment) &&
     normalizeRecommendation(value.clinicianTreatment) ===
-      normalizeRecommendation(assessment.recommendedTreatment);
+      normalizeRecommendation(assessmentRecommendation(assessment));
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -377,7 +378,7 @@ export function ClinicianReviewForm({
         <div>
           <FieldLabel>AI Treatment</FieldLabel>
           <div className="min-h-11 rounded-xl border border-cyan-300/15 bg-cyan-300/[0.05] px-3.5 py-3 text-sm text-cyan-100">
-            {assessment.recommendedTreatment || "Not recorded"}
+            {assessmentRecommendation(assessment) || "Not recorded"}
           </div>
         </div>
         <div>

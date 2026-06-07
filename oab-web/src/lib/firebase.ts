@@ -7,7 +7,7 @@ import {
   type User,
 } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
-import { getDownloadURL, getStorage, ref } from "firebase/storage";
+import { getBlob, getDownloadURL, getStorage, ref } from "firebase/storage";
 
 // These must be present in .env.local as NEXT_PUBLIC_FIREBASE_*
 const firebaseConfig = {
@@ -66,4 +66,10 @@ export async function ensureAnonIdToken(forceRefresh = false): Promise<string> {
 export async function getStorageDownloadUrl(storagePath: string): Promise<string> {
   const storage = getStorage(getClientApp());
   return getDownloadURL(ref(storage, storagePath));
+}
+
+/** Read a retained report through Firebase Storage rules using clinician auth. */
+export async function getStorageReportBlob(storagePath: string): Promise<Blob> {
+  const storage = getStorage(getClientApp());
+  return getBlob(ref(storage, storagePath));
 }
