@@ -27,7 +27,7 @@ export function DownloadCard({
         </span>
         <div className="min-w-0">
           <p className="text-sm font-semibold text-[#02052e]">{title}</p>
-          <p className="mt-0.5 text-xs text-slate-600">The link expires in 48 hours.</p>
+          <p className="mt-0.5 text-xs text-slate-600">Open your secure PDF report.</p>
         </div>
       </div>
       <a

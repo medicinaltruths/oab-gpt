@@ -118,6 +118,23 @@ function extractUrls(text: string): string[] {
   return urls;
 }
 
+function sanitizeUserFacingText(text: string): string {
+  return String(text || "")
+    .replace(/(?:filecite|cite)[^]*/gi, "")
+    .replace(/【[^】]*(?:filecite|turn\d+(?:file|search)\d+)[^】]*】/gi, "")
+    .replace(/\[\s*(?:filecite|cite)[^\]]*\]/gi, "")
+    .replace(
+      /\bfilecite\b(?:\s*[:：]?\s*(?:turn\d*file\d*|turnfile\s*\d+|[\d,\s-]+))?/gi,
+      "",
+    )
+    .replace(/\bturn\d+(?:file|search)\d+\b/gi, "")
+    .replace(/\bturnfile\s*\d+\b/gi, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
 function parsePdfFunctionResult(raw: string): PdfFunctionResult | null {
   try {
     const parsed = raw ? (JSON.parse(raw) as unknown) : null;
@@ -476,13 +493,13 @@ function buildReportReply(url: string, channel: "web" | "whatsapp"): string {
     return (
       `Your report is ready.\n\n` +
       `📄 Download your report:\n\n${url}\n\n` +
-      `This link expires in 48 hours.\n\n` +
+      `This secure link opens your PDF report.\n\n` +
       `Is there anything else I can help with today?`
     );
   }
   return (
     `Your report is ready.\n\n` +
-    `Use the download button below. The patient download link expires in 48 hours.`
+    `Use the download button below to open your PDF report.`
   );
 }
 
@@ -747,7 +764,7 @@ export async function POST(req: Request) {
     }
 
     const finalThreadId = String(response.id || threadId || "");
-    let finalReply = extractTextFromResponse(response);
+    let finalReply = sanitizeUserFacingText(extractTextFromResponse(response));
     const canonicalUrl = String(
       lastToolResult?.downloadUrl || priorUrl || ""
     );
@@ -765,6 +782,7 @@ export async function POST(req: Request) {
       finalReply =
         "The report was generated, but I couldn’t retrieve the message. Please try again.";
     }
+    finalReply = sanitizeUserFacingText(finalReply);
 
     return new Response(
       JSON.stringify({

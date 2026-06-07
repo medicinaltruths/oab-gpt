@@ -600,16 +600,31 @@ function ChatPane() {
 
   // Helper to clean up duplicate raw URLs when markdown link is present
   function normalizeAssistantText(text: string): string {
+    let cleaned = String(text || "")
+      .replace(/(?:filecite|cite)[^]*/gi, "")
+      .replace(/【[^】]*(?:filecite|turn\d+(?:file|search)\d+)[^】]*】/gi, "")
+      .replace(/\[\s*(?:filecite|cite)[^\]]*\]/gi, "")
+      .replace(
+        /\bfilecite\b(?:\s*[:：]?\s*(?:turn\d*file\d*|turnfile\s*\d+|[\d,\s-]+))?/gi,
+        "",
+      )
+      .replace(/\bturn\d+(?:file|search)\d+\b/gi, "")
+      .replace(/\bturnfile\s*\d+\b/gi, "")
+      .replace(/[ \t]+\n/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .replace(/[ \t]{2,}/g, " ")
+      .trim();
+
     // If there's any markdown link [..](http...) present, remove standalone occurrences
     // of that same URL on their own lines so we don't show both the short link and the raw URL.
-    const link = text.match(/\]\((https?:\/\/[^\s)]+)\)/);
+    const link = cleaned.match(/\]\((https?:\/\/[^\s)]+)\)/);
     if (link && link[1]) {
       const url = link[1];
       const escaped = url.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       const urlLine = new RegExp(`^\\s*${escaped}\\s*$`, "gm");
-      return text.replace(urlLine, "").trim();
+      cleaned = cleaned.replace(urlLine, "").trim();
     }
-    return text;
+    return cleaned;
   }
 
   useEffect(() => {

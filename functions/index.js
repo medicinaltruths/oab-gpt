@@ -10,12 +10,11 @@ const corsMW = require("cors");
 const { PDFDocument, rgb, StandardFonts } = require("pdf-lib");
 const { randomUUID } = require("crypto");
 
-const BUILD_TAG = "generateSummaryPdf v6 (2026-06-07)";
+const BUILD_TAG = "generateSummaryPdf v7 (2026-06-07)";
 
 // ===== Configure =====
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "*"; // e.g. "https://oab.yourdomain.com"
 const REPORT_RETENTION_DAYS = 365;
-const PUBLIC_REPORT_LINK_HOURS = 48;
 const DEFAULT_HOSPITAL_ID = process.env.DEFAULT_HOSPITAL_ID || "esth";
 const TWILIO_WHATSAPP_MODE =
   (process.env.TWILIO_WHATSAPP_MODE || "sandbox").toLowerCase();
@@ -259,10 +258,12 @@ function buildMessagingTwiml(text) {
 
 function formatReplyForWhatsapp(text) {
   return String(text || "")
-    .replace(/【[^】]*filecite[^】]*】/gi, "")
-    .replace(/\[\s*filecite[^\]]*\]/gi, "")
-    .replace(/\bfilecite\s+(?:turn\d+file\d+\s*)+/gi, "")
-    .replace(/\bturn\d+file\d+\b/gi, "")
+    .replace(/(?:filecite|cite)[^]*/gi, "")
+    .replace(/【[^】]*(?:filecite|turn\d+(?:file|search)\d+)[^】]*】/gi, "")
+    .replace(/\[\s*(?:filecite|cite)[^\]]*\]/gi, "")
+    .replace(/\bfilecite\b(?:\s*[:：]?\s*(?:turn\d*file\d*|turnfile\s*\d+|[\d,\s-]+))?/gi, "")
+    .replace(/\bturn\d+(?:file|search)\d+\b/gi, "")
+    .replace(/\bturnfile\s*\d+\b/gi, "")
     .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, "$1: $2")
     .replace(/^#{1,6}\s*/gm, "")
     .replace(/^\s*[-*•]\s+/gm, "- ")
@@ -777,13 +778,26 @@ exports.generateSummaryPdf = onRequest(async (req, res) => {
         const assessmentData = assessmentSnapshot.data() || {};
         const ownerAuthorized =
           uid && assessmentData.ownerUid && assessmentData.ownerUid === uid;
+        const websiteSessionAuthorized =
+          (assessmentData.channel === "web" ||
+            assessmentData.source === "website") &&
+          assessmentData.sessionId &&
+          assessmentData.sessionId === body.sessionId;
         const whatsappAuthorized =
           (assessmentData.channel === "whatsapp" ||
             assessmentData.source === "whatsapp") &&
           assessmentData.sessionId &&
           assessmentData.sessionId === body.sessionId;
 
-        if (!ownerAuthorized && !whatsappAuthorized) {
+        if (!ownerAuthorized && !websiteSessionAuthorized && !whatsappAuthorized) {
+          console.warn("[generateSummaryPdf] Assessment update not authorised", {
+            assessmentId,
+            hasUid: !!uid,
+            channel: assessmentData.channel || assessmentData.source || "unknown",
+            sessionMatches:
+              !!assessmentData.sessionId &&
+              assessmentData.sessionId === body.sessionId,
+          });
           return res.status(403).json({ok: false, error: "Assessment update not authorised"});
         }
         hospitalId = assessmentData.hospitalId || hospitalId;
@@ -805,21 +819,27 @@ exports.generateSummaryPdf = onRequest(async (req, res) => {
           contentType: "application/pdf",
           cacheControl: "private, max-age=3600",
           metadata: {
+            firebaseStorageDownloadTokens: randomUUID(),
             assessmentId: assessmentId || "",
             hospitalId: hospitalId,
             reportRetentionDays: String(REPORT_RETENTION_DAYS),
-            publicLinkHours: String(PUBLIC_REPORT_LINK_HOURS),
           },
         },
         resumable: false,
       });
 
-      const expiresAt = now + PUBLIC_REPORT_LINK_HOURS * 60 * 60 * 1000;
       const retentionUntil = now + REPORT_RETENTION_DAYS * 24 * 60 * 60 * 1000;
-      const [url] = await file.getSignedUrl({
-        action: "read",
-        expires: new Date(expiresAt),
-      });
+      const [metadata] = await file.getMetadata();
+      const token = metadata.metadata &&
+        metadata.metadata.firebaseStorageDownloadTokens;
+      const url = token ?
+        `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket.name)}` +
+          `/o/${encodeURIComponent(path)}?alt=media&token=${encodeURIComponent(token)}` :
+        null;
+
+      if (!url) {
+        throw new Error("Firebase Storage did not return a report download token");
+      }
 
       if (assessmentRef) {
         const recommendation = payload.treatmentRecommended;
@@ -843,7 +863,7 @@ exports.generateSummaryPdf = onRequest(async (req, res) => {
           pdfDownloadUrl: url,
           pdfStoragePath: path,
           pdfCreatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          pdfDownloadUrlExpiresAt: admin.firestore.Timestamp.fromMillis(expiresAt),
+          pdfDownloadUrlExpiresAt: admin.firestore.Timestamp.fromMillis(retentionUntil),
           reportRetentionUntil: admin.firestore.Timestamp.fromMillis(retentionUntil),
           pdfUrl: url,
           storagePath: path,
@@ -887,11 +907,11 @@ exports.generateSummaryPdf = onRequest(async (req, res) => {
         mode: "signed-url",
         storagePath: path,
         downloadUrl: url,
-        expiresAt,
+        expiresAt: retentionUntil,
         retentionUntil,
         build: BUILD_TAG,
         message:
-          "Public link expires in 48 hours; report storage is retained for 12 months.",
+          "Report link and storage are retained for 12 months.",
       });
     } catch (err) {
       const msg = (err && err.message) ? err.message : String(err);
